@@ -272,7 +272,7 @@ adw_view_switcher_button_class_init (AdwViewSwitcherButtonClass *klass)
                                     "orientation");
 
   /**
-   * AdwViewSwitcherButton:icon-name: (attributes org.gtk.Property.get=adw_view_switcher_button_get_icon_name org.gtk.Property.set=adw_view_switcher_button_set_icon_name)
+   * AdwViewSwitcherButton:icon-name:
    *
    * The icon name representing the view, or `NULL` for no icon.
    */
@@ -282,7 +282,7 @@ adw_view_switcher_button_class_init (AdwViewSwitcherButtonClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwViewSwitcherButton:needs-attention: (attributes org.gtk.Property.get=adw_view_switcher_button_get_needs_attention org.gtk.Property.set=adw_view_switcher_button_set_needs_attention)
+   * AdwViewSwitcherButton:needs-attention:
    *
    * Sets a flag specifying whether the view requires the user attention.
    *
@@ -363,7 +363,7 @@ adw_view_switcher_button_new (void)
 }
 
 /**
- * adw_view_switcher_button_get_icon_name: (attributes org.gtk.Method.get_property=icon-name)
+ * adw_view_switcher_button_get_icon_name:
  * @self: a view switcher button
  *
  * Gets the icon name representing the view.
@@ -379,7 +379,7 @@ adw_view_switcher_button_get_icon_name (AdwViewSwitcherButton *self)
 }
 
 /**
- * adw_view_switcher_button_set_icon_name: (attributes org.gtk.Method.set_property=icon-name)
+ * adw_view_switcher_button_set_icon_name:
  * @self: a view switcher button
  * @icon_name: (nullable): an icon name
  *
@@ -403,7 +403,7 @@ adw_view_switcher_button_set_icon_name (AdwViewSwitcherButton *self,
 }
 
 /**
- * adw_view_switcher_button_get_needs_attention: (attributes org.gtk.Method.get_property=needs-attention)
+ * adw_view_switcher_button_get_needs_attention:
  * @self: a view switcher button
  *
  * Gets whether the view represented by @self requires the user attention.
@@ -419,7 +419,7 @@ adw_view_switcher_button_get_needs_attention (AdwViewSwitcherButton *self)
 }
 
 /**
- * adw_view_switcher_button_set_needs_attention: (attributes org.gtk.Method.set_property=needs-attention)
+ * adw_view_switcher_button_set_needs_attention:
  * @self: a view switcher button
  * @needs_attention: whether the view needs attention
  *

@@ -98,7 +98,7 @@ adw_enum_list_item_class_init (AdwEnumListItemClass *klass)
   object_class->get_property = adw_enum_list_item_get_property;
 
   /**
-   * AdwEnumListItem:value: (attributes org.gtk.Property.get=adw_enum_list_item_get_value)
+   * AdwEnumListItem:value:
    *
    * The enum value.
    */
@@ -108,7 +108,7 @@ adw_enum_list_item_class_init (AdwEnumListItemClass *klass)
                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwEnumListItem:name: (attributes org.gtk.Property.get=adw_enum_list_item_get_name)
+   * AdwEnumListItem:name:
    *
    * The enum value name.
    */
@@ -118,7 +118,7 @@ adw_enum_list_item_class_init (AdwEnumListItemClass *klass)
                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwEnumListItem:nick: (attributes org.gtk.Property.get=adw_enum_list_item_get_nick)
+   * AdwEnumListItem:nick:
    *
    * The enum value nick.
    */
@@ -146,7 +146,7 @@ adw_enum_list_item_new (GEnumValue *enum_value)
 }
 
 /**
- * adw_enum_list_item_get_value: (attributes org.gtk.Method.get_property=value)
+ * adw_enum_list_item_get_value:
  *
  * Gets the enum value.
  *
@@ -161,7 +161,7 @@ adw_enum_list_item_get_value (AdwEnumListItem *self)
 }
 
 /**
- * adw_enum_list_item_get_name: (attributes org.gtk.Method.get_property=name)
+ * adw_enum_list_item_get_name:
  *
  * Gets the enum value name.
  *
@@ -176,7 +176,7 @@ adw_enum_list_item_get_name (AdwEnumListItem *self)
 }
 
 /**
- * adw_enum_list_item_get_nick: (attributes org.gtk.Method.get_property=nick)
+ * adw_enum_list_item_get_nick:
  *
  * Gets the enum value nick.
  *
@@ -267,7 +267,7 @@ adw_enum_list_model_class_init (AdwEnumListModelClass *klass)
   object_class->set_property = adw_enum_list_model_set_property;
 
   /**
-   * AdwEnumListModel:enum-type: (attributes org.gtk.Property.get=adw_enum_list_model_get_enum_type)
+   * AdwEnumListModel:enum-type:
    *
    * The type of the enum represented by the model.
    */
@@ -335,7 +335,7 @@ adw_enum_list_model_new (GType enum_type)
 }
 
 /**
- * adw_enum_list_model_get_enum_type: (attributes org.gtk.Method.get_property=enum-type)
+ * adw_enum_list_model_get_enum_type:
  *
  * Gets the type of the enum represented by @self.
  *
@@ -356,6 +356,8 @@ adw_enum_list_model_get_enum_type (AdwEnumListModel *self)
  * Finds the position of a given enum value in @self.
  *
  * If the value is not found, `GTK_INVALID_LIST_POSITION` is returned.
+ *
+ * Returns: the position of the value
  */
 guint
 adw_enum_list_model_find_position (AdwEnumListModel *self,

@@ -35,7 +35,9 @@
  * allocated the minimum size it can fit in instead.
  *
  * `AdwClamp` can scale with the text scale factor, use the
- * [property@ClampLayout:unit] property to enable that behavior.
+ * [property@Clamp:unit] property to enable that behavior.
+ *
+ * See also: [class@ClampLayout], [class@ClampScrollable].
  *
  * ## CSS nodes
  *
@@ -175,7 +177,7 @@ adw_clamp_class_init (AdwClampClass *klass)
                                     "orientation");
 
   /**
-   * AdwClamp:child: (attributes org.gtk.Property.get=adw_clamp_get_child org.gtk.Property.set=adw_clamp_set_child)
+   * AdwClamp:child:
    *
    * The child widget of the `AdwClamp`.
    */
@@ -185,7 +187,7 @@ adw_clamp_class_init (AdwClampClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwClamp:maximum-size: (attributes org.gtk.Property.get=adw_clamp_get_maximum_size org.gtk.Property.set=adw_clamp_set_maximum_size)
+   * AdwClamp:maximum-size:
    *
    * The maximum size allocated to the child.
    *
@@ -197,7 +199,7 @@ adw_clamp_class_init (AdwClampClass *klass)
                       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwClamp:tightening-threshold: (attributes org.gtk.Property.get=adw_clamp_get_tightening_threshold org.gtk.Property.set=adw_clamp_set_tightening_threshold)
+   * AdwClamp:tightening-threshold:
    *
    * The size above which the child is clamped.
    *
@@ -220,7 +222,7 @@ adw_clamp_class_init (AdwClampClass *klass)
                       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwClamp:unit: (attributes org.gtk.Property.get=adw_clamp_get_unit org.gtk.Property.set=adw_clamp_set_unit)
+   * AdwClamp:unit:
    *
    * The length unit for maximum size and tightening threshold.
    *
@@ -280,7 +282,7 @@ adw_clamp_new (void)
 }
 
 /**
- * adw_clamp_get_child: (attributes org.gtk.Method.get_property=child)
+ * adw_clamp_get_child:
  * @self: a clamp
  *
  * Gets the child widget of @self.
@@ -296,7 +298,7 @@ adw_clamp_get_child (AdwClamp  *self)
 }
 
 /**
- * adw_clamp_set_child: (attributes org.gtk.Method.set_property=child)
+ * adw_clamp_set_child:
  * @self: a clamp
  * @child: (nullable): the child widget
  *
@@ -309,11 +311,11 @@ adw_clamp_set_child (AdwClamp  *self,
   g_return_if_fail (ADW_IS_CLAMP (self));
   g_return_if_fail (child == NULL || GTK_IS_WIDGET (child));
 
-  if (child)
-    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
-
   if (self->child == child)
     return;
+
+  if (child)
+    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
 
   g_clear_pointer (&self->child, gtk_widget_unparent);
 
@@ -326,7 +328,7 @@ adw_clamp_set_child (AdwClamp  *self,
 }
 
 /**
- * adw_clamp_get_maximum_size: (attributes org.gtk.Method.get_property=maximum-size)
+ * adw_clamp_get_maximum_size:
  * @self: a clamp
  *
  * Gets the maximum size allocated to the child.
@@ -346,7 +348,7 @@ adw_clamp_get_maximum_size (AdwClamp *self)
 }
 
 /**
- * adw_clamp_set_maximum_size: (attributes org.gtk.Method.set_property=maximum-size)
+ * adw_clamp_set_maximum_size:
  * @self: a clamp
  * @maximum_size: the maximum size
  *
@@ -373,7 +375,7 @@ adw_clamp_set_maximum_size (AdwClamp *self,
 }
 
 /**
- * adw_clamp_get_tightening_threshold: (attributes org.gtk.Method.get_property=tightening-threshold)
+ * adw_clamp_get_tightening_threshold:
  * @self: a clamp
  *
  * Gets the size above which the child is clamped.
@@ -393,7 +395,7 @@ adw_clamp_get_tightening_threshold (AdwClamp *self)
 }
 
 /**
- * adw_clamp_set_tightening_threshold: (attributes org.gtk.Method.set_property=tightening-threshold)
+ * adw_clamp_set_tightening_threshold:
  * @self: a clamp
  * @tightening_threshold: the tightening threshold
  *
@@ -431,7 +433,7 @@ adw_clamp_set_tightening_threshold (AdwClamp *self,
 }
 
 /**
- * adw_clamp_get_unit: (attributes org.gtk.Method.get_property=unit)
+ * adw_clamp_get_unit:
  * @self: a clamp
  *
  * Gets the length unit for maximum size and tightening threshold.
@@ -453,7 +455,7 @@ adw_clamp_get_unit (AdwClamp *self)
 }
 
 /**
- * adw_clamp_set_unit: (attributes org.gtk.Method.set_property=unit)
+ * adw_clamp_set_unit:
  * @self: a clamp
  * @unit: the length unit
  *

@@ -51,6 +51,31 @@ This is commonly used for patterns such as [boxed lists](boxed-lists.html):
 
 See also: [class@ClampLayout], [class@ClampScrollable].
 
+# Wrap Box
+
+[class@WrapBox] is similar to [class@Gtk.Box], but can wrap lines when the
+widgets cannot fit otherwise. Unlike [class@Gtk.FlowBox], the children aren't
+arranged into a grid and behave like words in a wrapping label.
+
+<picture>
+  <source srcset="adaptive-tags-wide-dark.png" media="(prefers-color-scheme: dark)">
+  <img src="adaptive-tags-wide.png" alt="adaptive-tags-wide">
+</picture>
+<picture>
+  <source srcset="adaptive-tags-narrow-dark.png" media="(prefers-color-scheme: dark)">
+  <img src="adaptive-tags-narrow.png" alt="adaptive-tags-narrow">
+</picture>
+
+```xml
+<object class="AdwWrapBox">
+  <property name="line-spacing">6</property>
+  <property name="child-spacing">6</property>
+  <!-- children -->
+</object>
+```
+
+See also: [class@WrapLayout].
+
 # Dialogs
 
 [class@Dialog] is an adaptive dialog container. It can be presented as a
@@ -103,8 +128,6 @@ switch between them depending on available width.
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 550sp</condition>
@@ -171,8 +194,6 @@ containing the sidebar as the root page and content as its subpage. Only
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 400sp</condition>
@@ -239,8 +260,6 @@ but can be used with split header bars as well.
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 400sp</condition>
@@ -308,8 +327,6 @@ within another `AdwNavigationSplitView`'s sidebar:
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 860sp</condition>
@@ -384,8 +401,6 @@ within an `AdwOverlaySplitView`'s content:
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 860sp</condition>
@@ -436,8 +451,6 @@ provide an adaptive tabbed interface.
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 500px</condition>
@@ -495,4 +508,84 @@ provide an adaptive tabbed interface.
 <picture style="width: 49%; display: inline-block;">
   <source srcset="adaptive-tabs-narrow-2-dark.png" media="(prefers-color-scheme: dark)">
   <img src="adaptive-tabs-narrow-2.png" alt="adaptive-tabs-narrow-2">
+</picture>
+
+# Multi-Layout View
+
+[class@MultiLayoutView] defines multiple layouts and allows switching between
+them. Each layout has slots inside it, and when switching layouts, children are
+inserted into slots with matching IDs. Breakpoints can be used for switching the
+layout depending on available size.
+
+For example, it can be used  to have a sidebar that transforms into a bottom
+sheet on narrow sizes, as follows:
+
+```xml
+<object class="AdwWindow">
+  <child>
+    <object class="AdwBreakpoint">
+      <condition>max-width: 400sp</condition>
+      <setter object="multi_layout_view" property="layout-name">bottom-sheet</setter>
+    </object>
+  </child>
+  <property name="content">
+    <object class="AdwMultiLayoutView" id="multi_layout_view">
+      <child>
+        <object class="AdwLayout">
+          <property name="name">sidebar</property>
+          <property name="content">
+            <object class="AdwOverlaySplitView">
+              <property name="sidebar-position">end</property>
+              <property name="sidebar">
+                <object class="AdwLayoutSlot">
+                  <property name="id">secondary</property>
+                </object>
+              </property>
+              <property name="content">
+                <object class="AdwLayoutSlot">
+                  <property name="id">primary</property>
+                </object>
+              </property>
+            </object>
+          </property>
+        </object>
+      </child>
+      <child>
+        <object class="AdwLayout">
+          <property name="name">bottom-sheet</property>
+          <property name="content">
+            <object class="AdwBottomSheet">
+              <property name="open">True</property>
+              <property name="content">
+                <object class="AdwLayoutSlot">
+                  <property name="id">primary</property>
+                </object>
+              </property>
+              <property name="sheet">
+                <object class="AdwLayoutSlot">
+                  <property name="id">secondary</property>
+                </object>
+              </property>
+            </object>
+          </property>
+        </object>
+      </child>
+      <child type="primary">
+        <!-- primary child -->
+      </child>
+      <child type="secondary">
+        <!-- secondary child -->
+      </child>
+    </object>
+  </property>
+</object>
+```
+
+<picture>
+  <source srcset="adaptive-multi-layout-wide-dark.png" media="(prefers-color-scheme: dark)">
+  <img src="adaptive-multi-layout-wide.png" alt="adaptive-multi-layout-wide">
+</picture>
+<picture>
+  <source srcset="adaptive-multi-layout-narrow-dark.png" media="(prefers-color-scheme: dark)">
+  <img src="adaptive-multi-layout-narrow.png" alt="adaptive-multi-layout-narrow">
 </picture>

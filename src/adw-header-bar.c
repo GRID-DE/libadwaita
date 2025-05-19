@@ -23,14 +23,18 @@
 
 #include "adw-header-bar.h"
 
+#include "adw-adaptive-preview-private.h"
 #include "adw-back-button-private.h"
 #include "adw-bin.h"
+#include "adw-bottom-sheet-private.h"
 #include "adw-dialog.h"
 #include "adw-enums.h"
+#include "adw-floating-sheet-private.h"
 #include "adw-gizmo-private.h"
 #include "adw-navigation-split-view.h"
 #include "adw-navigation-view.h"
 #include "adw-overlay-split-view.h"
+#include "adw-sheet-controls-private.h"
 #include "adw-widget-utils-private.h"
 
 /**
@@ -50,7 +54,7 @@
  * ## Dialog Integration
  *
  * When placed inside an [class@Dialog], `AdwHeaderBar` will display the dialog
- * title intead of window title. It will also adjust the decoration layout to
+ * title instead of window title. It will also adjust the decoration layout to
  * ensure it always has a close button and nothing else. Set
  * [property@HeaderBar:show-start-title-buttons] and
  * [property@HeaderBar:show-end-title-buttons] to `FALSE` to remove it if it's
@@ -71,9 +75,16 @@
  *
  * ## Split View Integration
  *
- * When placed inside `AdwNavigationSplitView` or `AdwOverlaySplitView`,
+ * When placed inside [class@NavigationSplitView] or [class@OverlaySplitView],
  * `AdwHeaderBar` will automatically hide the title buttons other than at the
  * edges of the window.
+ *
+ * ## Bottom Sheet Integration
+ *
+ * When played inside [class@BottomSheet], `AdwHeaderBar` will not show the title
+ * unless [property@BottomSheet:show-drag-handle] is set to `FALSE`, regardless
+ * of [property@HeaderBar:show-title]. This only applies to the default title,
+ * titles set with [property@HeaderBar:title-widget] will still be shown.
  *
  * ## Centering Policy
  *
@@ -110,7 +121,7 @@
  * `AdwHeaderBar`'s CSS node is called `headerbar`. It contains a `windowhandle`
  * subnode, which contains a `box` subnode, which contains three `widget`
  * subnodes at the start, center and end of the header bar. The start and end
- * subnotes contain a `box` subnode with the `.start` and `.end` style classes
+ * subnodes contain a `box` subnode with the `.start` and `.end` style classes
  * respectively, and the center node contains a node that represents the title.
  *
  * Each of the boxes contains a `windowcontrols` subnode, see
@@ -158,8 +169,8 @@ struct _AdwHeaderBar {
   GtkWidget *title_label;
   GtkWidget *title_widget;
 
-  GtkWidget *start_window_controls;
-  GtkWidget *end_window_controls;
+  GtkWidget *start_controls;
+  GtkWidget *end_controls;
   GtkWidget *back_button;
 
   char *decoration_layout;
@@ -175,6 +186,8 @@ struct _AdwHeaderBar {
 
   GtkWidget *title_navigation_page;
   GtkWidget *dialog;
+  GtkWidget *sheet;
+  GtkWidget *adaptive_preview;
 
   GSList *split_views;
 };
@@ -223,56 +236,44 @@ update_decoration_layout (AdwHeaderBar *self,
                           gboolean      start,
                           gboolean      end)
 {
-  const char *decoration_layout;
+  if (start && self->start_controls) {
+    g_object_set (self->start_controls,
+                  "decoration-layout", self->decoration_layout,
+                  NULL);
+  }
 
-  if (self->dialog) {
-    gboolean prefer_start = FALSE;
+  if (end && self->end_controls) {
+    g_object_set (self->end_controls,
+                  "decoration-layout", self->decoration_layout,
+                  NULL);
+  }
+}
 
-    if (self->decoration_layout) {
-      prefer_start = adw_decoration_layout_prefers_start (self->decoration_layout);
-    } else {
-      GtkSettings *settings = gtk_widget_get_settings (GTK_WIDGET (self));
-      char *global_layout;
+static void
+recreate_start_controls (AdwHeaderBar *self)
+{
+  GtkWidget *controls;
 
-      g_object_get (settings, "gtk-decoration-layout", &global_layout, NULL);
+  if (self->start_controls) {
+    if (self->sheet && ADW_IS_SHEET_CONTROLS (self->start_controls))
+      return;
 
-      prefer_start = adw_decoration_layout_prefers_start (global_layout);
+    if (!self->sheet && GTK_IS_WINDOW_CONTROLS (self->start_controls))
+      return;
 
-      g_free (global_layout);
+    gtk_box_remove (GTK_BOX (self->start_box), self->start_controls);
+    self->start_controls = NULL;
+  }
+
+  if (self->sheet)
+    controls = adw_sheet_controls_new (GTK_PACK_START);
+  else
+    {
+      controls = gtk_window_controls_new (GTK_PACK_START);
+
+      gtk_window_controls_set_use_native_controls (GTK_WINDOW_CONTROLS (controls),
+                                                   self->adaptive_preview == NULL);
     }
-
-    if (prefer_start)
-      decoration_layout = "close:";
-    else
-      decoration_layout = ":close";
-  } else {
-    decoration_layout = self->decoration_layout;
-  }
-
-  if (start && self->start_window_controls) {
-    gtk_window_controls_set_decoration_layout (GTK_WINDOW_CONTROLS (self->start_window_controls),
-                                               decoration_layout);
-  }
-
-  if (end && self->end_window_controls) {
-    gtk_window_controls_set_decoration_layout (GTK_WINDOW_CONTROLS (self->end_window_controls),
-                                               decoration_layout);
-  }
-}
-
-static void
-notify_decoration_layout_cb (AdwHeaderBar *self)
-{
-  if (self->decoration_layout)
-    return;
-
-  update_decoration_layout (self, TRUE, TRUE);
-}
-
-static void
-create_start_window_controls (AdwHeaderBar *self)
-{
-  GtkWidget *controls = gtk_window_controls_new (GTK_PACK_START);
 
   g_object_bind_property (controls, "empty",
                           controls, "visible",
@@ -281,15 +282,36 @@ create_start_window_controls (AdwHeaderBar *self)
                             G_CALLBACK (update_box_visibility),
                             self->start_box);
   gtk_box_prepend (GTK_BOX (self->start_box), controls);
-  self->start_window_controls = controls;
+  self->start_controls = controls;
 
   update_decoration_layout (self, TRUE, FALSE);
 }
 
 static void
-create_end_window_controls (AdwHeaderBar *self)
+recreate_end_controls (AdwHeaderBar *self)
 {
-  GtkWidget *controls = gtk_window_controls_new (GTK_PACK_END);
+  GtkWidget *controls;
+
+  if (self->end_controls) {
+    if (self->sheet && ADW_IS_SHEET_CONTROLS (self->end_controls))
+      return;
+
+    if (!self->sheet && GTK_IS_WINDOW_CONTROLS (self->end_controls))
+      return;
+
+    gtk_box_remove (GTK_BOX (self->end_box), self->end_controls);
+    self->end_controls = NULL;
+  }
+
+  if (self->sheet)
+    controls = adw_sheet_controls_new (GTK_PACK_END);
+  else
+    {
+      controls = gtk_window_controls_new (GTK_PACK_END);
+
+      gtk_window_controls_set_use_native_controls (GTK_WINDOW_CONTROLS (controls),
+                                                   self->adaptive_preview == NULL);
+    }
 
   g_object_bind_property (controls, "empty",
                           controls, "visible",
@@ -298,9 +320,7 @@ create_end_window_controls (AdwHeaderBar *self)
                             G_CALLBACK (update_box_visibility),
                             self->end_box);
   gtk_box_append (GTK_BOX (self->end_box), controls);
-  self->end_window_controls = controls;
-
-  update_decoration_layout (self, FALSE, TRUE);
+  self->end_controls = controls;
 }
 
 static void
@@ -310,7 +330,7 @@ create_back_button (AdwHeaderBar *self)
 
   gtk_box_insert_child_after (GTK_BOX (self->start_box),
                               button,
-                              self->start_window_controls);
+                              self->start_controls);
   g_signal_connect_swapped (button, "notify::visible",
                             G_CALLBACK (update_box_visibility),
                             self->start_box);
@@ -324,14 +344,23 @@ update_start_title_buttons (AdwHeaderBar *self)
   gboolean show = self->show_start_title_buttons;
   GSList *l;
 
+  if (self->adaptive_preview &&
+      !adw_adaptive_preview_get_window_controls (ADW_ADAPTIVE_PREVIEW (self->adaptive_preview))) {
+    show = FALSE;
+  }
+
   for (l = self->split_views; l; l = l->next) {
     SplitViewData *data = l->data;
 
     if (ADW_IS_NAVIGATION_SPLIT_VIEW (data->split_view)) {
       AdwNavigationSplitView *split_view = ADW_NAVIGATION_SPLIT_VIEW (data->split_view);
       gboolean collapsed = adw_navigation_split_view_get_collapsed (split_view);
+      GtkPackType sidebar_pos = adw_navigation_split_view_get_sidebar_position (split_view);
 
-      show &= data->is_sidebar || collapsed;
+      if (data->is_sidebar)
+        show &= collapsed || sidebar_pos == GTK_PACK_START;
+      else
+        show &= collapsed || sidebar_pos == GTK_PACK_END;
     }
 
     if (ADW_IS_OVERLAY_SPLIT_VIEW (data->split_view)) {
@@ -347,14 +376,11 @@ update_start_title_buttons (AdwHeaderBar *self)
     }
   }
 
-  if ((self->start_window_controls != NULL) == show)
-    return;
-
   if (show) {
-    create_start_window_controls (self);
-  } else if (self->start_box && self->start_window_controls) {
-    gtk_box_remove (GTK_BOX (self->start_box), self->start_window_controls);
-    self->start_window_controls = NULL;
+    recreate_start_controls (self);
+  } else if (self->start_box && self->start_controls) {
+    gtk_box_remove (GTK_BOX (self->start_box), self->start_controls);
+    self->start_controls = NULL;
   }
 
   update_box_visibility (self->start_box);
@@ -366,14 +392,23 @@ update_end_title_buttons (AdwHeaderBar *self)
   gboolean show = self->show_end_title_buttons;
   GSList *l;
 
+  if (self->adaptive_preview &&
+      !adw_adaptive_preview_get_window_controls (ADW_ADAPTIVE_PREVIEW (self->adaptive_preview))) {
+    show = FALSE;
+  }
+
   for (l = self->split_views; l; l = l->next) {
     SplitViewData *data = l->data;
 
     if (ADW_IS_NAVIGATION_SPLIT_VIEW (data->split_view)) {
       AdwNavigationSplitView *split_view = ADW_NAVIGATION_SPLIT_VIEW (data->split_view);
       gboolean collapsed = adw_navigation_split_view_get_collapsed (split_view);
+      GtkPackType sidebar_pos = adw_navigation_split_view_get_sidebar_position (split_view);
 
-      show &= !data->is_sidebar || collapsed;
+      if (data->is_sidebar)
+        show &= collapsed || sidebar_pos == GTK_PACK_END;
+      else
+        show &= collapsed || sidebar_pos == GTK_PACK_START;
     }
 
     if (ADW_IS_OVERLAY_SPLIT_VIEW (data->split_view)) {
@@ -389,14 +424,11 @@ update_end_title_buttons (AdwHeaderBar *self)
     }
   }
 
-  if ((self->end_window_controls != NULL) == show)
-    return;
-
   if (show) {
-    create_end_window_controls (self);
-  } else if (self->end_box && self->end_window_controls) {
-    gtk_box_remove (GTK_BOX (self->end_box), self->end_window_controls);
-    self->end_window_controls = NULL;
+    recreate_end_controls (self);
+  } else if (self->end_box && self->end_controls) {
+    gtk_box_remove (GTK_BOX (self->end_box), self->end_controls);
+    self->end_controls = NULL;
   }
 
   update_box_visibility (self->end_box);
@@ -416,6 +448,12 @@ update_title (AdwHeaderBar *self)
 
   if (!self->title_label)
     return;
+
+  if (ADW_IS_BOTTOM_SHEET (self->sheet) &&
+      adw_bottom_sheet_get_show_drag_handle (ADW_BOTTOM_SHEET (self->sheet))) {
+    gtk_label_set_text (GTK_LABEL (self->title_label), NULL);
+    return;
+  }
 
   if (self->title_navigation_page)
     title = adw_navigation_page_get_title (ADW_NAVIGATION_PAGE (self->title_navigation_page));
@@ -461,12 +499,57 @@ construct_title_label (AdwHeaderBar *self)
   update_title (self);
 }
 
+static GtkWidget *
+find_sheet (GtkWidget *widget)
+{
+  GtkWidget *sheet, *bin, *parent;
+
+  sheet = adw_widget_get_ancestor (widget, ADW_TYPE_BOTTOM_SHEET, TRUE, FALSE);
+
+  if (!sheet)
+    sheet = adw_widget_get_ancestor (widget, ADW_TYPE_FLOATING_SHEET, TRUE, FALSE);
+
+  if (ADW_IS_BOTTOM_SHEET (sheet))
+    bin = adw_bottom_sheet_get_sheet_bin (ADW_BOTTOM_SHEET (sheet));
+  else if (ADW_IS_FLOATING_SHEET (sheet))
+    bin = adw_floating_sheet_get_sheet_bin (ADW_FLOATING_SHEET (sheet));
+  else
+    return NULL;
+
+  if (bin && (widget == bin || gtk_widget_is_ancestor (widget, bin)))
+    return sheet;
+
+  parent = gtk_widget_get_parent (sheet);
+  if (parent)
+    return find_sheet (parent);
+
+  return NULL;
+}
+
+static GtkWidget *
+find_adaptive_preview (GtkWidget *widget, GtkWidget **screen_view)
+{
+  GtkWidget *preview, *screen;
+
+  preview = adw_widget_get_ancestor (widget, ADW_TYPE_ADAPTIVE_PREVIEW, TRUE, TRUE);
+  if (!preview)
+    return NULL;
+
+  screen = adw_adaptive_preview_get_screen (ADW_ADAPTIVE_PREVIEW (preview));
+
+  if (gtk_widget_is_ancestor (widget, screen)) {
+    *screen_view = screen;
+    return preview;
+  }
+
+  return NULL;
+}
+
 static void
 adw_header_bar_root (GtkWidget *widget)
 {
   AdwHeaderBar *self = ADW_HEADER_BAR (widget);
-  GtkSettings *settings = gtk_widget_get_settings (GTK_WIDGET (self));
-  GtkWidget *parent;
+  GtkWidget *parent, *screen_view = NULL;
 
   GTK_WIDGET_CLASS (adw_header_bar_parent_class)->root (widget);
 
@@ -474,6 +557,18 @@ adw_header_bar_root (GtkWidget *widget)
     adw_widget_get_ancestor (widget, ADW_TYPE_NAVIGATION_PAGE, TRUE, TRUE);
 
   self->dialog = adw_widget_get_ancestor (widget, ADW_TYPE_DIALOG, TRUE, FALSE);
+  self->adaptive_preview = find_adaptive_preview (widget, &screen_view);
+  self->sheet = find_sheet (widget);
+
+  if (ADW_IS_BOTTOM_SHEET (self->sheet)) {
+    g_signal_connect_swapped (self->sheet, "notify::show-drag-handle",
+                              G_CALLBACK (update_title), widget);
+  }
+
+  if (self->adaptive_preview) {
+    g_signal_connect_swapped (self->adaptive_preview, "notify::window-controls",
+                              G_CALLBACK (update_title_buttons), widget);
+  }
 
   if (self->title_navigation_page) {
     g_signal_connect_swapped (self->title_navigation_page, "notify::title",
@@ -495,8 +590,11 @@ adw_header_bar_root (GtkWidget *widget)
     GtkWidget *split_view = NULL;
     gboolean is_sidebar = FALSE;
 
-    if (GTK_IS_NATIVE (parent))
+    if (GTK_IS_NATIVE (parent) ||
+        parent == self->sheet ||
+        parent == screen_view) {
       break;
+    }
 
     if (ADW_IS_NAVIGATION_SPLIT_VIEW (parent)) {
       AdwNavigationPage *sidebar;
@@ -504,6 +602,8 @@ adw_header_bar_root (GtkWidget *widget)
       split_view = parent;
 
       g_signal_connect_swapped (split_view, "notify::collapsed",
+                                G_CALLBACK (update_title_buttons), widget);
+      g_signal_connect_swapped (split_view, "notify::sidebar-position",
                                 G_CALLBACK (update_title_buttons), widget);
 
       sidebar = adw_navigation_split_view_get_sidebar (ADW_NAVIGATION_SPLIT_VIEW (split_view));
@@ -542,11 +642,6 @@ adw_header_bar_root (GtkWidget *widget)
     parent = gtk_widget_get_parent (parent);
   }
 
-  if (self->dialog) {
-    g_signal_connect_swapped (settings, "notify::gtk-decoration-layout",
-                              G_CALLBACK (notify_decoration_layout_cb), self);
-  }
-
   update_title (self);
   update_title_buttons (self);
   update_decoration_layout (self, TRUE, TRUE);
@@ -556,11 +651,7 @@ static void
 adw_header_bar_unroot (GtkWidget *widget)
 {
   AdwHeaderBar *self = ADW_HEADER_BAR (widget);
-  GtkSettings *settings = gtk_widget_get_settings (GTK_WIDGET (self));
   GSList *l;
-
-  if (self->dialog)
-    g_signal_handlers_disconnect_by_func (settings, notify_decoration_layout_cb, self);
 
   if (self->title_navigation_page) {
     g_signal_handlers_disconnect_by_func (self->title_navigation_page,
@@ -573,8 +664,19 @@ adw_header_bar_unroot (GtkWidget *widget)
                                           update_title, widget);
   }
 
+  if (self->sheet) {
+    g_signal_handlers_disconnect_by_func (self->sheet,
+                                          update_title, widget);
+  }
+
+  if (self->adaptive_preview) {
+    g_signal_handlers_disconnect_by_func (self->adaptive_preview,
+                                          update_title_buttons, widget);
+  }
+
   self->title_navigation_page = NULL;
   self->dialog = NULL;
+  self->sheet = FALSE;
 
   for (l = self->split_views; l; l = l->next) {
     SplitViewData *data = l->data;
@@ -586,8 +688,6 @@ adw_header_bar_unroot (GtkWidget *widget)
   }
 
   g_clear_pointer (&self->split_views, g_slist_free);
-
-  update_title_buttons (self);
 
   GTK_WIDGET_CLASS (adw_header_bar_parent_class)->unroot (widget);
 }
@@ -709,7 +809,7 @@ adw_header_bar_class_init (AdwHeaderBarClass *class)
   widget_class->compute_expand = adw_widget_compute_expand_horizontal_only;
 
   /**
-   * AdwHeaderBar:title-widget: (attributes org.gtk.Property.get=adw_header_bar_get_title_widget org.gtk.Property.set=adw_header_bar_set_title_widget)
+   * AdwHeaderBar:title-widget:
    *
    * The title widget to display.
    *
@@ -734,7 +834,7 @@ adw_header_bar_class_init (AdwHeaderBarClass *class)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwHeaderBar:show-start-title-buttons: (attributes org.gtk.Property.get=adw_header_bar_get_show_start_title_buttons org.gtk.Property.set=adw_header_bar_set_show_start_title_buttons)
+   * AdwHeaderBar:show-start-title-buttons:
    *
    * Whether to show title buttons at the start of the header bar.
    *
@@ -751,7 +851,7 @@ adw_header_bar_class_init (AdwHeaderBarClass *class)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwHeaderBar:show-end-title-buttons: (attributes org.gtk.Property.get=adw_header_bar_get_show_end_title_buttons org.gtk.Property.set=adw_header_bar_set_show_end_title_buttons)
+   * AdwHeaderBar:show-end-title-buttons:
    *
    * Whether to show title buttons at the end of the header bar.
    *
@@ -768,7 +868,7 @@ adw_header_bar_class_init (AdwHeaderBarClass *class)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwHeaderBar:show-back-button: (attributes org.gtk.Property.get=adw_header_bar_get_show_back_button org.gtk.Property.set=adw_header_bar_set_show_back_button)
+   * AdwHeaderBar:show-back-button:
    *
    * Whether the header bar can show the back button.
    *
@@ -783,7 +883,7 @@ adw_header_bar_class_init (AdwHeaderBarClass *class)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwHeaderBar:decoration-layout: (attributes org.gtk.Property.get=adw_header_bar_get_decoration_layout org.gtk.Property.set=adw_header_bar_set_decoration_layout)
+   * AdwHeaderBar:decoration-layout:
    *
    * The decoration layout for buttons.
    *
@@ -804,7 +904,7 @@ adw_header_bar_class_init (AdwHeaderBarClass *class)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwHeaderBar:centering-policy: (attributes org.gtk.Property.get=adw_header_bar_get_centering_policy org.gtk.Property.set=adw_header_bar_set_centering_policy)
+   * AdwHeaderBar:centering-policy:
    *
    * The policy for aligning the center widget.
    */
@@ -815,7 +915,7 @@ adw_header_bar_class_init (AdwHeaderBarClass *class)
                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwHeaderBar:show-title: (attributes org.gtk.Property.get=adw_header_bar_get_show_title org.gtk.Property.set=adw_header_bar_set_show_title)
+   * AdwHeaderBar:show-title:
    *
    * Whether the title widget should be shown.
    *
@@ -877,8 +977,6 @@ adw_header_bar_init (AdwHeaderBar *self)
   self->size_group = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
 
   construct_title_label (self);
-  create_start_window_controls (self);
-  create_end_window_controls (self);
   create_back_button (self);
 }
 
@@ -1004,7 +1102,7 @@ adw_header_bar_remove (AdwHeaderBar *self,
 }
 
 /**
- * adw_header_bar_get_title_widget: (attributes org.gtk.Method.get_property=title-widget)
+ * adw_header_bar_get_title_widget:
  * @self: a header bar
  *
  * Gets the title widget widget of @self.
@@ -1020,7 +1118,7 @@ adw_header_bar_get_title_widget (AdwHeaderBar *self)
 }
 
 /**
- * adw_header_bar_set_title_widget: (attributes org.gtk.Method.set_property=title-widget)
+ * adw_header_bar_set_title_widget:
  * @self: a header bar
  * @title_widget: (nullable): a widget to use for a title
  *
@@ -1070,7 +1168,7 @@ adw_header_bar_set_title_widget (AdwHeaderBar *self,
 }
 
 /**
- * adw_header_bar_get_show_start_title_buttons: (attributes org.gtk.Method.get_property=show-start-title-buttons)
+ * adw_header_bar_get_show_start_title_buttons:
  * @self: a header bar
  *
  * Gets whether to show title buttons at the start of @self.
@@ -1086,7 +1184,7 @@ adw_header_bar_get_show_start_title_buttons (AdwHeaderBar *self)
 }
 
 /**
- * adw_header_bar_set_show_start_title_buttons: (attributes org.gtk.Method.set_property=show-start-title-buttons)
+ * adw_header_bar_set_show_start_title_buttons:
  * @self: a header bar
  * @setting: `TRUE` to show standard title buttons
  *
@@ -1118,7 +1216,7 @@ adw_header_bar_set_show_start_title_buttons (AdwHeaderBar *self,
 }
 
 /**
- * adw_header_bar_get_show_end_title_buttons: (attributes org.gtk.Method.get_property=show-end-title-buttons)
+ * adw_header_bar_get_show_end_title_buttons:
  * @self: a header bar
  *
  * Gets whether to show title buttons at the end of @self.
@@ -1134,7 +1232,7 @@ adw_header_bar_get_show_end_title_buttons (AdwHeaderBar *self)
 }
 
 /**
- * adw_header_bar_set_show_end_title_buttons: (attributes org.gtk.Method.set_property=show-end-title-buttons)
+ * adw_header_bar_set_show_end_title_buttons:
  * @self: a header bar
  * @setting: `TRUE` to show standard title buttons
  *
@@ -1166,7 +1264,7 @@ adw_header_bar_set_show_end_title_buttons (AdwHeaderBar *self,
 }
 
 /**
- * adw_header_bar_get_show_back_button: (attributes org.gtk.Method.get_property=show-back-button)
+ * adw_header_bar_get_show_back_button:
  * @self: a header bar
  *
  * Gets whether @self can show the back button.
@@ -1184,7 +1282,7 @@ adw_header_bar_get_show_back_button (AdwHeaderBar *self)
 }
 
 /**
- * adw_header_bar_set_show_back_button: (attributes org.gtk.Method.set_property=show-back-button)
+ * adw_header_bar_set_show_back_button:
  * @self: a header bar
  * @show_back_button: whether to show the back button
  *
@@ -1223,7 +1321,7 @@ adw_header_bar_set_show_back_button (AdwHeaderBar *self,
 }
 
 /**
- * adw_header_bar_get_decoration_layout: (attributes org.gtk.Method.get_property=decoration-layout)
+ * adw_header_bar_get_decoration_layout:
  * @self: a header bar
  *
  * Gets the decoration layout for @self.
@@ -1239,7 +1337,7 @@ adw_header_bar_get_decoration_layout (AdwHeaderBar *self)
 }
 
 /**
- * adw_header_bar_set_decoration_layout: (attributes org.gtk.Method.set_property=decoration-layout)
+ * adw_header_bar_set_decoration_layout:
  * @self: a header bar
  * @layout: (nullable): a decoration layout
  *
@@ -1271,7 +1369,7 @@ adw_header_bar_set_decoration_layout (AdwHeaderBar *self,
 }
 
 /**
- * adw_header_bar_get_centering_policy: (attributes org.gtk.Method.get_property=centering-policy)
+ * adw_header_bar_get_centering_policy:
  * @self: a header bar
  *
  * Gets the policy for aligning the center widget.
@@ -1287,7 +1385,7 @@ adw_header_bar_get_centering_policy (AdwHeaderBar *self)
 }
 
 /**
- * adw_header_bar_set_centering_policy: (attributes org.gtk.Method.set_property=centering-policy)
+ * adw_header_bar_set_centering_policy:
  * @self: a header bar
  * @centering_policy: the centering policy
  *
@@ -1316,7 +1414,7 @@ adw_header_bar_set_centering_policy (AdwHeaderBar       *self,
 }
 
 /**
- * adw_header_bar_get_show_title: (attributes org.gtk.Method.get_property=show-title)
+ * adw_header_bar_get_show_title:
  * @self: a header bar
  *
  * Gets whether the title widget should be shown.
@@ -1334,7 +1432,7 @@ adw_header_bar_get_show_title (AdwHeaderBar *self)
 }
 
 /**
- * adw_header_bar_set_show_title: (attributes org.gtk.Method.set_property=show-title)
+ * adw_header_bar_set_show_title:
  * @self: a header bar
  * @show_title: whether the title widget is visible
  *

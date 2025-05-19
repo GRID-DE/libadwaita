@@ -169,6 +169,7 @@ struct _AdwNavigationSplitView
   GtkWidget *content_bin;
   GtkWidget *navigation_view;
 
+  GtkPackType sidebar_position;
   gboolean collapsed;
   gboolean show_content;
   gboolean changing_page;
@@ -190,6 +191,7 @@ enum {
   PROP_0,
   PROP_SIDEBAR,
   PROP_CONTENT,
+  PROP_SIDEBAR_POSITION,
   PROP_COLLAPSED,
   PROP_SHOW_CONTENT,
   PROP_MIN_SIDEBAR_WIDTH,
@@ -200,6 +202,15 @@ enum {
 };
 
 static GParamSpec *props[LAST_PROP];
+
+static inline GtkPackType
+get_start_or_end (AdwNavigationSplitView *self)
+{
+  GtkTextDirection direction = gtk_widget_get_direction (GTK_WIDGET (self));
+  gboolean is_rtl = direction == GTK_TEXT_DIR_RTL;
+
+  return is_rtl ? GTK_PACK_END : GTK_PACK_START;
+}
 
 static void
 measure_uncollapsed (GtkWidget      *widget,
@@ -278,16 +289,16 @@ allocate_uncollapsed (GtkWidget *widget,
   sidebar_width = CLAMP ((int) (width * self->sidebar_width_fraction),
                          sidebar_min, sidebar_max);
 
-  if (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL) {
-    transform = gsk_transform_translate (NULL, &GRAPHENE_POINT_INIT (width - sidebar_width, 0));
-
-    gtk_widget_allocate (self->sidebar_bin, sidebar_width, height, baseline, transform);
-    gtk_widget_allocate (self->content_bin, width - sidebar_width, height, baseline, NULL);
-  } else {
+  if (self->sidebar_position == get_start_or_end (self)) {
     transform = gsk_transform_translate (NULL, &GRAPHENE_POINT_INIT (sidebar_width, 0));
 
     gtk_widget_allocate (self->sidebar_bin, sidebar_width, height, baseline, NULL);
     gtk_widget_allocate (self->content_bin, width - sidebar_width, height, baseline, transform);
+  } else {
+    transform = gsk_transform_translate (NULL, &GRAPHENE_POINT_INIT (width - sidebar_width, 0));
+
+    gtk_widget_allocate (self->sidebar_bin, sidebar_width, height, baseline, transform);
+    gtk_widget_allocate (self->content_bin, width - sidebar_width, height, baseline, NULL);
   }
 }
 
@@ -325,29 +336,55 @@ update_navigation_stack (AdwNavigationSplitView *self)
 
   if (self->changing_page && self->sidebar && self->content) {
     if (self->show_content) {
-      stack[i++] = self->sidebar;
+      if (self->sidebar_position == GTK_PACK_END) {
+        stack[i++] = self->content;
+        stack[i++] = self->sidebar;
 
-      adw_navigation_view_replace (ADW_NAVIGATION_VIEW (self->navigation_view),
-                                   stack, i);
-      adw_navigation_view_push (ADW_NAVIGATION_VIEW (self->navigation_view),
-                                self->content);
+        adw_navigation_view_replace (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                     stack, i);
+        adw_navigation_view_pop (ADW_NAVIGATION_VIEW (self->navigation_view));
+      } else {
+        stack[i++] = self->sidebar;
+
+        adw_navigation_view_replace (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                     stack, i);
+        adw_navigation_view_push (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                  self->content);
+      }
     } else {
-      stack[i++] = self->sidebar;
-      stack[i++] = self->content;
+      if (self->sidebar_position == GTK_PACK_END) {
+        stack[i++] = self->content;
 
-      adw_navigation_view_replace (ADW_NAVIGATION_VIEW (self->navigation_view),
-                                   stack, i);
-      adw_navigation_view_pop (ADW_NAVIGATION_VIEW (self->navigation_view));
+        adw_navigation_view_replace (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                     stack, i);
+        adw_navigation_view_push (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                  self->sidebar);
+      } else {
+        stack[i++] = self->sidebar;
+        stack[i++] = self->content;
+
+        adw_navigation_view_replace (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                     stack, i);
+        adw_navigation_view_pop (ADW_NAVIGATION_VIEW (self->navigation_view));
+      }
     }
 
     return;
   }
 
-  if (self->sidebar)
-    stack[i++] = self->sidebar;
+  if (self->sidebar_position == GTK_PACK_END) {
+    if (self->content)
+      stack[i++] = self->content;
 
-  if (self->content && (self->show_content || !self->sidebar))
-    stack[i++] = self->content;
+    if (self->sidebar && (!self->show_content || !self->content))
+      stack[i++] = self->sidebar;
+  } else {
+    if (self->sidebar)
+      stack[i++] = self->sidebar;
+
+    if (self->content && (self->show_content || !self->sidebar))
+      stack[i++] = self->content;
+  }
 
   adw_navigation_view_replace (ADW_NAVIGATION_VIEW (self->navigation_view),
                                stack, i);
@@ -489,16 +526,30 @@ update_collapsed (AdwNavigationSplitView *self)
     self->navigation_view = adw_navigation_view_new ();
     gtk_widget_set_parent (self->navigation_view, GTK_WIDGET (self));
 
-    if (self->sidebar) {
-      adw_navigation_page_block_signals (self->sidebar);
-      adw_navigation_view_add (ADW_NAVIGATION_VIEW (self->navigation_view),
-                               self->sidebar);
-    }
+    if (self->sidebar_position == GTK_PACK_END) {
+      if (self->content) {
+        adw_navigation_page_block_signals (self->content);
+        adw_navigation_view_add (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                 self->content);
+      }
 
-    if (self->content) {
-      adw_navigation_page_block_signals (self->content);
-      adw_navigation_view_add (ADW_NAVIGATION_VIEW (self->navigation_view),
-                               self->content);
+      if (self->sidebar) {
+        adw_navigation_page_block_signals (self->sidebar);
+        adw_navigation_view_add (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                 self->sidebar);
+      }
+    } else {
+      if (self->sidebar) {
+        adw_navigation_page_block_signals (self->sidebar);
+        adw_navigation_view_add (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                 self->sidebar);
+      }
+
+      if (self->content) {
+        adw_navigation_page_block_signals (self->content);
+        adw_navigation_view_add (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                 self->content);
+      }
     }
 
     update_navigation_stack (self);
@@ -520,6 +571,11 @@ update_collapsed (AdwNavigationSplitView *self)
     self->sidebar_bin = adw_bin_new ();
     gtk_widget_add_css_class (self->sidebar_bin, "sidebar-pane");
     gtk_widget_set_parent (self->sidebar_bin, GTK_WIDGET (self));
+
+    if (self->sidebar_position == GTK_PACK_END)
+      gtk_widget_add_css_class (self->sidebar_bin, "end");
+    else
+      gtk_widget_remove_css_class (self->sidebar_bin, "end");
 
     if (self->sidebar) {
       adw_bin_set_child (ADW_BIN (self->sidebar_bin), GTK_WIDGET (self->sidebar));
@@ -567,7 +623,7 @@ update_collapsed (AdwNavigationSplitView *self)
     if (should_focus)
       gtk_widget_grab_focus (focus);
 
-    g_object_remove_weak_pointer (G_OBJECT (focus), (gpointer *) &focus);
+    g_clear_weak_pointer (&focus);
   }
 }
 
@@ -686,6 +742,9 @@ adw_navigation_split_view_get_property (GObject    *object,
   case PROP_CONTENT:
     g_value_set_object (value, adw_navigation_split_view_get_content (self));
     break;
+  case PROP_SIDEBAR_POSITION:
+    g_value_set_enum (value, adw_navigation_split_view_get_sidebar_position (self));
+    break;
   case PROP_COLLAPSED:
     g_value_set_boolean (value, adw_navigation_split_view_get_collapsed (self));
     break;
@@ -724,6 +783,9 @@ adw_navigation_split_view_set_property (GObject      *object,
   case PROP_CONTENT:
     adw_navigation_split_view_set_content (self, g_value_get_object (value));
     break;
+  case PROP_SIDEBAR_POSITION:
+    adw_navigation_split_view_set_sidebar_position (self, g_value_get_enum (value));
+    break;
   case PROP_COLLAPSED:
     adw_navigation_split_view_set_collapsed (self, g_value_get_boolean (value));
     break;
@@ -761,7 +823,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
   widget_class->unroot = adw_navigation_split_view_unroot;
 
   /**
-   * AdwNavigationSplitView:sidebar: (attributes org.gtk.Property.get=adw_navigation_split_view_get_sidebar org.gtk.Property.set=adw_navigation_split_view_set_sidebar)
+   * AdwNavigationSplitView:sidebar:
    *
    * The sidebar widget.
    *
@@ -773,7 +835,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwNavigationSplitView:content: (attributes org.gtk.Property.get=adw_navigation_split_view_get_content org.gtk.Property.set=adw_navigation_split_view_set_content)
+   * AdwNavigationSplitView:content:
    *
    * The content widget.
    *
@@ -785,7 +847,26 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwNavigationSplitView:collapsed: (attributes org.gtk.Property.get=adw_navigation_split_view_get_collapsed org.gtk.Property.set=adw_navigation_split_view_set_collapsed)
+   * AdwNavigationSplitView:sidebar-position:
+   *
+   * The sidebar position.
+   *
+   * If set to `GTK_PACK_START`, the sidebar is displayed before the content,
+   * and the sidebar will be the root page when collapsed.
+   *
+   * If set to `GTK_PACK_END`, the sidebar is displayed after the content,
+   * and the content will be the root page.
+   *
+   * Since: 1.7
+   */
+  props[PROP_SIDEBAR_POSITION] =
+    g_param_spec_enum ("sidebar-position", NULL, NULL,
+                       GTK_TYPE_PACK_TYPE,
+                       GTK_PACK_START,
+                       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+  /**
+   * AdwNavigationSplitView:collapsed:
    *
    * Whether the split view is collapsed.
    *
@@ -803,7 +884,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwNavigationSplitView:show-content: (attributes org.gtk.Property.get=adw_navigation_split_view_get_show_content org.gtk.Property.set=adw_navigation_split_view_set_show_content)
+   * AdwNavigationSplitView:show-content:
    *
    * Determines the visible page when collapsed.
    *
@@ -822,7 +903,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwNavigationSplitView:min-sidebar-width: (attributes org.gtk.Property.get=adw_navigation_split_view_get_min_sidebar_width org.gtk.Property.set=adw_navigation_split_view_set_min_sidebar_width)
+   * AdwNavigationSplitView:min-sidebar-width:
    *
    * The minimum sidebar width.
    *
@@ -840,7 +921,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwNavigationSplitView:max-sidebar-width: (attributes org.gtk.Property.get=adw_navigation_split_view_get_max_sidebar_width org.gtk.Property.set=adw_navigation_split_view_set_max_sidebar_width)
+   * AdwNavigationSplitView:max-sidebar-width:
    *
    * The maximum sidebar width.
    *
@@ -858,7 +939,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwNavigationSplitView:sidebar-width-fraction: (attributes org.gtk.Property.get=adw_navigation_split_view_get_sidebar_width_fraction org.gtk.Property.set=adw_navigation_split_view_set_sidebar_width_fraction)
+   * AdwNavigationSplitView:sidebar-width-fraction:
    *
    * The preferred sidebar width as a fraction of the total width.
    *
@@ -877,7 +958,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwNavigationSplitView:sidebar-width-unit: (attributes org.gtk.Property.get=adw_navigation_split_view_get_sidebar_width_unit org.gtk.Property.set=adw_navigation_split_view_set_sidebar_width_unit)
+   * AdwNavigationSplitView:sidebar-width-unit:
    *
    * The length unit for minimum and maximum sidebar widths.
    *
@@ -906,6 +987,7 @@ adw_navigation_split_view_class_init (AdwNavigationSplitViewClass *klass)
 static void
 adw_navigation_split_view_init (AdwNavigationSplitView *self)
 {
+  self->sidebar_position = GTK_PACK_START;
   self->min_sidebar_width = 180;
   self->max_sidebar_width = 280;
   self->sidebar_width_fraction = 0.25;
@@ -960,7 +1042,7 @@ adw_navigation_split_view_new (void)
 }
 
 /**
- * adw_navigation_split_view_get_sidebar: (attributes org.gtk.Method.get_property=sidebar)
+ * adw_navigation_split_view_get_sidebar:
  * @self: a navigation split view
  *
  * Gets the sidebar widget for @self.
@@ -978,7 +1060,7 @@ adw_navigation_split_view_get_sidebar (AdwNavigationSplitView *self)
 }
 
 /**
- * adw_navigation_split_view_set_sidebar: (attributes org.gtk.Method.set_property=sidebar)
+ * adw_navigation_split_view_set_sidebar:
  * @self: a navigation split view
  * @sidebar: (nullable): the sidebar widget
  *
@@ -993,11 +1075,11 @@ adw_navigation_split_view_set_sidebar (AdwNavigationSplitView *self,
   g_return_if_fail (ADW_IS_NAVIGATION_SPLIT_VIEW (self));
   g_return_if_fail (sidebar == NULL || ADW_IS_NAVIGATION_PAGE (sidebar));
 
-  if (sidebar)
-    g_return_if_fail (gtk_widget_get_parent (GTK_WIDGET (sidebar)) == NULL);
-
   if (sidebar == self->sidebar)
     return;
+
+  if (sidebar)
+    g_return_if_fail (gtk_widget_get_parent (GTK_WIDGET (sidebar)) == NULL);
 
   if (tags_equal (sidebar, self->content)) {
     g_critical ("Trying to add sidebar with the tag '%s' to "
@@ -1053,7 +1135,7 @@ adw_navigation_split_view_set_sidebar (AdwNavigationSplitView *self,
 }
 
 /**
- * adw_navigation_split_view_get_content: (attributes org.gtk.Method.get_property=content)
+ * adw_navigation_split_view_get_content:
  * @self: a navigation split view
  *
  * Sets the content widget for @self.
@@ -1071,7 +1153,7 @@ adw_navigation_split_view_get_content (AdwNavigationSplitView *self)
 }
 
 /**
- * adw_navigation_split_view_set_content: (attributes org.gtk.Method.set_property=content)
+ * adw_navigation_split_view_set_content:
  * @self: a navigation split view
  * @content: (nullable): the content widget
  *
@@ -1086,11 +1168,11 @@ adw_navigation_split_view_set_content (AdwNavigationSplitView *self,
   g_return_if_fail (ADW_IS_NAVIGATION_SPLIT_VIEW (self));
   g_return_if_fail (content == NULL || ADW_IS_NAVIGATION_PAGE (content));
 
-  if (content)
-    g_return_if_fail (gtk_widget_get_parent (GTK_WIDGET (content)) == NULL);
-
   if (content == self->content)
     return;
+
+  if (content)
+    g_return_if_fail (gtk_widget_get_parent (GTK_WIDGET (content)) == NULL);
 
   if (tags_equal (self->sidebar, content)) {
     g_critical ("Trying to add content with the tag '%s' to "
@@ -1146,7 +1228,66 @@ adw_navigation_split_view_set_content (AdwNavigationSplitView *self,
 }
 
 /**
- * adw_navigation_split_view_get_collapsed: (attributes org.gtk.Method.get_property=collapsed)
+ * adw_navigation_split_view_get_sidebar_position:
+ * @self: a navigation split view
+ *
+ * Gets the sidebar position for @self.
+ *
+ * Returns: the sidebar position for @self
+ *
+ * Since: 1.7
+ */
+GtkPackType
+adw_navigation_split_view_get_sidebar_position (AdwNavigationSplitView *self)
+{
+  g_return_val_if_fail (ADW_IS_NAVIGATION_SPLIT_VIEW (self), GTK_PACK_START);
+
+  return self->sidebar_position;
+}
+
+/**
+ * adw_navigation_split_view_set_sidebar_position:
+ * @self: a navigation split view
+ * @position: the new position
+ *
+ * Sets the sidebar position for @self.
+ *
+ * If set to `GTK_PACK_START`, the sidebar is displayed before the content,
+ * and the sidebar will be the root page when collapsed.
+ *
+ * If set to `GTK_PACK_END`, the sidebar is displayed after the content,
+ * and the content will be the root page.
+ *
+ * Since: 1.7
+ */
+void
+adw_navigation_split_view_set_sidebar_position (AdwNavigationSplitView *self,
+                                                GtkPackType             position)
+{
+  g_return_if_fail (ADW_IS_NAVIGATION_SPLIT_VIEW (self));
+  g_return_if_fail (position <= GTK_PACK_END);
+
+  if (self->sidebar_position == position)
+    return;
+
+  self->sidebar_position = position;
+
+  if (self->collapsed) {
+    update_navigation_stack (self);
+  } else {
+    if (position == GTK_PACK_END)
+      gtk_widget_add_css_class (self->sidebar_bin, "end");
+    else
+      gtk_widget_remove_css_class (self->sidebar_bin, "end");
+
+    gtk_widget_queue_allocate (GTK_WIDGET (self));
+  }
+
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_SIDEBAR_POSITION]);
+}
+
+/**
+ * adw_navigation_split_view_get_collapsed:
  * @self: a navigation split view
  *
  * Gets whether @self is collapsed.
@@ -1164,7 +1305,7 @@ adw_navigation_split_view_get_collapsed (AdwNavigationSplitView *self)
 }
 
 /**
- * adw_navigation_split_view_set_collapsed: (attributes org.gtk.Method.set_property=collapsed)
+ * adw_navigation_split_view_set_collapsed:
  * @self: a navigation split view
  * @collapsed: whether @self is collapsed
  *
@@ -1198,7 +1339,7 @@ adw_navigation_split_view_set_collapsed (AdwNavigationSplitView *self,
 }
 
 /**
- * adw_navigation_split_view_get_show_content: (attributes org.gtk.Method.get_property=show-content)
+ * adw_navigation_split_view_get_show_content:
  * @self: a navigation split view
  *
  * Gets which page is visible when @self is collapsed.
@@ -1216,7 +1357,7 @@ adw_navigation_split_view_get_show_content (AdwNavigationSplitView *self)
 }
 
 /**
- * adw_navigation_split_view_set_show_content: (attributes org.gtk.Method.set_property=show-content)
+ * adw_navigation_split_view_set_show_content:
  * @self: a navigation split view
  * @show_content: whether to show content when collapsed
  *
@@ -1252,16 +1393,25 @@ adw_navigation_split_view_set_show_content (AdwNavigationSplitView *self,
   self->changing_page = TRUE;
   g_idle_add_once ((GSourceOnceFunc) changing_page_done_cb, self);
 
-  if (show_content)
-    adw_navigation_view_push (ADW_NAVIGATION_VIEW (self->navigation_view),
-                              self->content);
-  else
-    adw_navigation_view_pop_to_page (ADW_NAVIGATION_VIEW (self->navigation_view),
-                                     self->sidebar);
+  if (self->sidebar_position == GTK_PACK_END) {
+    if (show_content)
+      adw_navigation_view_pop_to_page (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                       self->content);
+    else
+      adw_navigation_view_push (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                self->sidebar);
+  } else {
+    if (show_content)
+      adw_navigation_view_push (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                self->content);
+    else
+      adw_navigation_view_pop_to_page (ADW_NAVIGATION_VIEW (self->navigation_view),
+                                       self->sidebar);
+  }
 }
 
 /**
- * adw_navigation_split_view_get_min_sidebar_width: (attributes org.gtk.Method.get_property=min-sidebar-width)
+ * adw_navigation_split_view_get_min_sidebar_width:
  * @self: a navigation split view
  *
  * Gets the minimum sidebar width for @self.
@@ -1279,7 +1429,7 @@ adw_navigation_split_view_get_min_sidebar_width (AdwNavigationSplitView *self)
 }
 
 /**
- * adw_navigation_split_view_set_min_sidebar_width: (attributes org.gtk.Method.set_property=min-sidebar-width)
+ * adw_navigation_split_view_set_min_sidebar_width:
  * @self: a navigation split view
  * @width: the minimum width
  *
@@ -1311,7 +1461,7 @@ adw_navigation_split_view_set_min_sidebar_width (AdwNavigationSplitView *self,
 }
 
 /**
- * adw_navigation_split_view_get_max_sidebar_width: (attributes org.gtk.Method.get_property=max-sidebar-width)
+ * adw_navigation_split_view_get_max_sidebar_width:
  * @self: a navigation split view
  *
  * Gets the maximum sidebar width for @self.
@@ -1329,7 +1479,7 @@ adw_navigation_split_view_get_max_sidebar_width (AdwNavigationSplitView *self)
 }
 
 /**
- * adw_navigation_split_view_set_max_sidebar_width: (attributes org.gtk.Method.set_property=max-sidebar-width)
+ * adw_navigation_split_view_set_max_sidebar_width:
  * @self: a navigation split view
  * @width: the maximum width
  *
@@ -1361,7 +1511,7 @@ adw_navigation_split_view_set_max_sidebar_width (AdwNavigationSplitView *self,
 }
 
 /**
- * adw_navigation_split_view_get_sidebar_width_fraction: (attributes org.gtk.Method.get_property=sidebar-width-fraction)
+ * adw_navigation_split_view_get_sidebar_width_fraction:
  * @self: a navigation split view
  *
  * Gets the preferred sidebar width fraction for @self.
@@ -1379,7 +1529,7 @@ adw_navigation_split_view_get_sidebar_width_fraction (AdwNavigationSplitView *se
 }
 
 /**
- * adw_navigation_split_view_set_sidebar_width_fraction: (attributes org.gtk.Method.set_property=sidebar-width-fraction)
+ * adw_navigation_split_view_set_sidebar_width_fraction:
  * @self: a navigation split view
  * @fraction: the preferred width fraction
  *
@@ -1412,7 +1562,7 @@ adw_navigation_split_view_set_sidebar_width_fraction (AdwNavigationSplitView *se
 }
 
 /**
- * adw_navigation_split_view_get_sidebar_width_unit: (attributes org.gtk.Method.get_property=sidebar-width-unit)
+ * adw_navigation_split_view_get_sidebar_width_unit:
  * @self: a navigation split view
  *
  * Gets the length unit for minimum and maximum sidebar widths.
@@ -1430,7 +1580,7 @@ adw_navigation_split_view_get_sidebar_width_unit (AdwNavigationSplitView *self)
 }
 
 /**
- * adw_navigation_split_view_set_sidebar_width_unit: (attributes org.gtk.Method.set_property=sidebar-width-unit)
+ * adw_navigation_split_view_set_sidebar_width_unit:
  * @self: a navigation split view
  * @unit: the length unit
  *

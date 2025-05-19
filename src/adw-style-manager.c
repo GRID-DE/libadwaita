@@ -10,6 +10,7 @@
 
 #include "adw-style-manager-private.h"
 
+#include "adw-accent-color-private.h"
 #include "adw-main-private.h"
 #include "adw-settings-private.h"
 #include <gtk/gtk.h>
@@ -38,12 +39,25 @@
  * A class for managing application-wide styling.
  *
  * `AdwStyleManager` provides a way to query and influence the application
- * styles, such as whether to use dark or high contrast appearance.
+ * styles, such as whether to use dark style, the system accent color or high
+ * contrast appearance.
  *
  * It allows to set the color scheme via the
  * [property@StyleManager:color-scheme] property, and to query the current
- * appearance, as well as whether a system-wide color scheme preference exists.
+ * appearance, as well as whether a system-wide color scheme and accent color
+ * preferences exists.
  */
+
+#define DEFAULT_DOCUMENT_FONT_FAMILY "Sans"
+#define DEFAULT_DOCUMENT_FONT_SIZE 10
+#define DEFAULT_DOCUMENT_FONT_SIZE_STR "10"
+
+#define DEFAULT_MONOSPACE_FONT_FAMILY "Monospace"
+#define DEFAULT_MONOSPACE_FONT_SIZE 10
+#define DEFAULT_MONOSPACE_FONT_SIZE_STR "10"
+
+#define DEFAULT_DOCUMENT_FONT (DEFAULT_DOCUMENT_FONT_FAMILY " " DEFAULT_DOCUMENT_FONT_SIZE_STR)
+#define DEFAULT_MONOSPACE_FONT (DEFAULT_MONOSPACE_FONT_FAMILY " " DEFAULT_MONOSPACE_FONT_SIZE_STR)
 
 struct _AdwStyleManager
 {
@@ -51,12 +65,17 @@ struct _AdwStyleManager
 
   GdkDisplay *display;
   AdwSettings *settings;
+  GtkSettings *gtk_settings;
   GtkCssProvider *provider;
   GtkCssProvider *colors_provider;
+  GtkCssProvider *accent_provider;
+  GtkCssProvider *fonts_provider;
 
   AdwColorScheme color_scheme;
   gboolean dark;
   gboolean setting_dark;
+  char *document_font_name;
+  char *monospace_font_name;
 
   GtkCssProvider *animations_provider;
   guint animation_timeout_id;
@@ -71,6 +90,11 @@ enum {
   PROP_SYSTEM_SUPPORTS_COLOR_SCHEMES,
   PROP_DARK,
   PROP_HIGH_CONTRAST,
+  PROP_SYSTEM_SUPPORTS_ACCENT_COLORS,
+  PROP_ACCENT_COLOR,
+  PROP_ACCENT_COLOR_RGBA,
+  PROP_DOCUMENT_FONT_NAME,
+  PROP_MONOSPACE_FONT_NAME,
   LAST_PROP,
 };
 
@@ -78,6 +102,14 @@ static GParamSpec *props[LAST_PROP];
 
 static GHashTable *display_style_managers = NULL;
 static AdwStyleManager *default_instance = NULL;
+
+typedef enum {
+  UPDATE_BASE         = 1 << 0,
+  UPDATE_COLOR_SCHEME = 1 << 1,
+  UPDATE_ACCENT_COLOR = 1 << 2,
+  UPDATE_FONTS        = 1 << 3,
+  UPDATE_ALL = UPDATE_BASE | UPDATE_COLOR_SCHEME | UPDATE_ACCENT_COLOR | UPDATE_FONTS
+} StylesheetUpdateFlags;
 
 static void
 debug_theme_valist (const gchar *format,
@@ -269,15 +301,90 @@ find_theme_dir (const gchar  *name,
   return FALSE;
 }
 
-static void
-update_stylesheet (AdwStyleManager *self)
+static char*
+generate_accent_css (AdwStyleManager *self)
 {
-  GtkSettings *gtk_settings;
+  AdwAccentColor accent = adw_style_manager_get_accent_color (self);
+  GString *str = g_string_new ("");
+  GdkRGBA rgba;
+  char *rgba_str;
 
+  adw_accent_color_to_rgba (accent, &rgba);
+  rgba_str = gdk_rgba_to_string (&rgba);
+
+  g_string_append_printf (str, "@define-color accent_bg_color %s;\n", rgba_str);
+  g_string_append (str, "@define-color accent_fg_color white;\n");
+
+  g_free (rgba_str);
+
+  return g_string_free (str, FALSE);
+}
+
+static char*
+generate_fonts_css (AdwStyleManager *self)
+{
+  PangoFontDescription *document_desc = pango_font_description_from_string (self->document_font_name);
+  PangoFontDescription *monospace_desc = pango_font_description_from_string (self->monospace_font_name);
+  GString *str = g_string_new ("");
+
+  g_string_append (str, ":root {\n");
+
+  if (document_desc && (pango_font_description_get_set_fields (document_desc) & (PANGO_FONT_MASK_FAMILY)) != 0) {
+    const char *family = pango_font_description_get_family (document_desc);
+    g_string_append_printf (str, "  --document-font-family: %s;\n", family);
+  } else {
+    g_string_append_printf (str, "  --document-font-family: %s;\n", DEFAULT_DOCUMENT_FONT_FAMILY);
+  }
+
+  if (document_desc && (pango_font_description_get_set_fields (document_desc) & (PANGO_FONT_MASK_SIZE)) != 0) {
+    int size = pango_font_description_get_size (document_desc);
+    char buf[G_ASCII_DTOSTR_BUF_SIZE];
+
+    g_ascii_dtostr (buf, sizeof (buf), (double) size / PANGO_SCALE);
+
+    if (pango_font_description_get_size_is_absolute (document_desc))
+      g_string_append_printf (str, "  --document-font-size: %spx;\n", buf);
+    else
+      g_string_append_printf (str, "  --document-font-size: %spt;\n", buf);
+  } else {
+    g_string_append_printf (str, "  --document-font-size: %dpt;\n", DEFAULT_DOCUMENT_FONT_SIZE);
+  }
+
+  if (monospace_desc && (pango_font_description_get_set_fields (monospace_desc) & (PANGO_FONT_MASK_FAMILY)) != 0) {
+    const char *family = pango_font_description_get_family (monospace_desc);
+    g_string_append_printf (str, "  --monospace-font-family: %s;\n", family);
+  } else {
+    g_string_append_printf (str, "  --monospace-font-family: %s;\n", DEFAULT_MONOSPACE_FONT_FAMILY);
+  }
+
+  if (monospace_desc && (pango_font_description_get_set_fields (monospace_desc) & (PANGO_FONT_MASK_SIZE)) != 0) {
+    int size = pango_font_description_get_size (monospace_desc);
+    char buf[G_ASCII_DTOSTR_BUF_SIZE];
+
+    g_ascii_dtostr (buf, sizeof (buf), (double) size / PANGO_SCALE);
+
+    if (pango_font_description_get_size_is_absolute (monospace_desc))
+      g_string_append_printf (str, "  --monospace-font-size: %spx;\n", buf);
+    else
+      g_string_append_printf (str, "  --monospace-font-size: %spt;\n", buf);
+  } else {
+    g_string_append_printf (str, "  --monospace-font-size: %dpt;\n", DEFAULT_MONOSPACE_FONT_SIZE);
+  }
+
+  pango_font_description_free (document_desc);
+  pango_font_description_free (monospace_desc);
+
+  g_string_append (str, "}");
+
+  return g_string_free (str, FALSE);
+}
+
+static void
+update_stylesheet (AdwStyleManager       *self,
+                   StylesheetUpdateFlags  flags)
+{
   if (!self->display)
     return;
-
-  gtk_settings = gtk_settings_get_for_display (self->display);
 
   if (self->animation_timeout_id)
     g_clear_handle_id (&self->animation_timeout_id, g_source_remove);
@@ -286,13 +393,15 @@ update_stylesheet (AdwStyleManager *self)
                                               GTK_STYLE_PROVIDER (self->animations_provider),
                                               10000);
 
-  self->setting_dark = TRUE;
+  if (flags & UPDATE_COLOR_SCHEME) {
+    self->setting_dark = TRUE;
 
-  g_object_set (gtk_settings,
-                "gtk-application-prefer-dark-theme", self->dark,
-                NULL);
+    g_object_set (self->gtk_settings,
+                  "gtk-application-prefer-dark-theme", self->dark,
+                  NULL);
 
-  self->setting_dark = FALSE;
+    self->setting_dark = FALSE;
+  }
 
   gchar *found_theme_path = NULL;
   gchar *found_base_path = NULL;
@@ -319,16 +428,16 @@ update_stylesheet (AdwStyleManager *self)
   else
     {
       debug_theme ("No libadwaita support in system theme, using default style.");
-      if (self->provider) {
-        if (adw_settings_get_high_contrast (self->settings))
-          gtk_css_provider_load_from_resource (self->provider,
-                                               "/org/gnome/Adwaita/styles/base-hc.css");
-        else
-          gtk_css_provider_load_from_resource (self->provider,
-                                               "/org/gnome/Adwaita/styles/base.css");
+      if (flags & UPDATE_BASE && self->provider) {
+          if (adw_settings_get_high_contrast (self->settings))
+            gtk_css_provider_load_from_resource (self->provider,
+                                                 "/org/gnome/Adwaita/styles/base-hc.css");
+          else
+            gtk_css_provider_load_from_resource (self->provider,
+                                                 "/org/gnome/Adwaita/styles/base.css");
       }
 
-      if (self->colors_provider) {
+      if (flags & UPDATE_COLOR_SCHEME && self->colors_provider) {
         if (self->dark)
           gtk_css_provider_load_from_resource (self->colors_provider,
                                                "/org/gnome/Adwaita/styles/defaults-dark.css");
@@ -336,13 +445,26 @@ update_stylesheet (AdwStyleManager *self)
           gtk_css_provider_load_from_resource (self->colors_provider,
                                                "/org/gnome/Adwaita/styles/defaults-light.css");
       }
-    }
+    
+      if (flags & UPDATE_ACCENT_COLOR && self->accent_provider) {
+        char *accent_css = generate_accent_css (self);
+        gtk_css_provider_load_from_string (self->accent_provider, accent_css);
+        g_free (accent_css);
+      }
 
-  self->animation_timeout_id =
-    g_timeout_add_once (SWITCH_DURATION,
-                        (GSourceOnceFunc) enable_animations_cb,
-                        self);
+      if (flags & UPDATE_FONTS && self->fonts_provider) {
+          char *fonts_css = generate_fonts_css (self);
+          gtk_css_provider_load_from_string (self->fonts_provider, fonts_css);
+          g_free (fonts_css);
+      }
+
+    self->animation_timeout_id =
+      g_timeout_add_once (SWITCH_DURATION,
+                          (GSourceOnceFunc) enable_animations_cb,
+                          self)
+    }
 }
+
 
 static gboolean
 get_is_dark (AdwStyleManager *self)
@@ -377,9 +499,77 @@ update_dark (AdwStyleManager *self)
 
   self->dark = dark;
 
-  update_stylesheet (self);
+  update_stylesheet (self, UPDATE_COLOR_SCHEME);
 
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_DARK]);
+}
+
+static void
+update_fonts (AdwStyleManager *self)
+{
+  gboolean document_changed = FALSE;
+  gboolean monospace_changed = FALSE;
+
+  const char *new_document_font_name = adw_settings_get_document_font_name (self->settings);
+  const char *new_monospace_font_name = adw_settings_get_monospace_font_name (self->settings);
+
+  if (new_document_font_name) {
+    if (g_set_str (&self->document_font_name, new_document_font_name))
+      document_changed = TRUE;
+  } else {
+    char *font_name = NULL;
+
+    g_object_get (self->gtk_settings, "gtk-font-name", &font_name, NULL);
+
+    if (!font_name)
+      font_name = g_strdup (DEFAULT_DOCUMENT_FONT);
+
+    if (g_set_str (&self->document_font_name, font_name))
+      document_changed = TRUE;
+
+    g_free (font_name);
+  }
+
+  if (new_monospace_font_name) {
+    if (g_set_str (&self->monospace_font_name, new_monospace_font_name))
+      monospace_changed = TRUE;
+  } else {
+    char *font_name = NULL;
+    PangoFontDescription *desc = NULL;
+
+    g_object_get (self->gtk_settings, "gtk-font-name", &font_name, NULL);
+
+    if (font_name)
+      desc = pango_font_description_from_string (font_name);
+
+    if (desc) {
+      char *new_str;
+
+      pango_font_description_set_family (desc, DEFAULT_MONOSPACE_FONT_FAMILY);
+
+      new_str = pango_font_description_to_string (desc);
+
+      if (g_set_str (&self->monospace_font_name, new_str))
+        monospace_changed = TRUE;
+
+      g_free (new_str);
+    } else {
+      if (g_set_str (&self->monospace_font_name, DEFAULT_MONOSPACE_FONT))
+        monospace_changed = TRUE;
+    }
+
+    pango_font_description_free (desc);
+    g_free (font_name);
+  }
+
+  if (document_changed || monospace_changed)
+    update_stylesheet (self, UPDATE_FONTS);
+
+  if (document_changed)
+    g_object_notify_by_pspec (G_OBJECT (self), props[PROP_DOCUMENT_FONT_NAME]);
+
+  if (monospace_changed)
+    g_object_notify_by_pspec (G_OBJECT (self), props[PROP_MONOSPACE_FONT_NAME]);
 }
 
 static void
@@ -389,9 +579,24 @@ notify_system_supports_color_schemes_cb (AdwStyleManager *self)
 }
 
 static void
+notify_accent_color_cb (AdwStyleManager *self)
+{
+  update_stylesheet (self, UPDATE_ACCENT_COLOR);
+
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_ACCENT_COLOR]);
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_ACCENT_COLOR_RGBA]);
+}
+
+static void
+notify_system_supports_accent_colors_cb (AdwStyleManager *self)
+{
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_SYSTEM_SUPPORTS_ACCENT_COLORS]);
+}
+
+static void
 notify_high_contrast_cb (AdwStyleManager *self)
 {
-  update_stylesheet (self);
+  update_stylesheet (self, UPDATE_BASE);
 
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_HIGH_CONTRAST]);
 }
@@ -410,24 +615,25 @@ adw_style_manager_constructed (GObject *object)
   G_OBJECT_CLASS (adw_style_manager_parent_class)->constructed (object);
 
   if (self->display) {
-    GtkSettings *settings = gtk_settings_get_for_display (self->display);
     gboolean prefer_dark_theme;
 
-    g_object_get (settings,
+    self->gtk_settings = gtk_settings_get_for_display (self->display);
+
+    g_object_get (self->gtk_settings,
                   "gtk-application-prefer-dark-theme", &prefer_dark_theme,
                   NULL);
 
     if (prefer_dark_theme)
       warn_prefer_dark_theme (self);
 
-    g_signal_connect_object (settings,
+    g_signal_connect_object (self->gtk_settings,
                              "notify::gtk-application-prefer-dark-theme",
                              G_CALLBACK (warn_prefer_dark_theme),
                              self,
                              G_CONNECT_SWAPPED);
 
     if (!adw_is_granite_present () && !g_getenv ("GTK_THEME")) {
-      g_object_set (gtk_settings_get_for_display (self->display),
+      g_object_set (self->gtk_settings,
                     "gtk-theme-name", "Adwaita-empty",
                     NULL);
 
@@ -440,12 +646,29 @@ adw_style_manager_constructed (GObject *object)
       gtk_style_context_add_provider_for_display (self->display,
                                                   GTK_STYLE_PROVIDER (self->colors_provider),
                                                   GTK_STYLE_PROVIDER_PRIORITY_THEME);
+
+      self->accent_provider = gtk_css_provider_new ();
+      gtk_style_context_add_provider_for_display (self->display,
+                                                  GTK_STYLE_PROVIDER (self->accent_provider),
+                                                  GTK_STYLE_PROVIDER_PRIORITY_THEME);
+
+      self->fonts_provider = gtk_css_provider_new ();
+      gtk_style_context_add_provider_for_display (self->display,
+                                                  GTK_STYLE_PROVIDER (self->fonts_provider),
+                                                  GTK_STYLE_PROVIDER_PRIORITY_THEME);
     }
 
     self->animations_provider = gtk_css_provider_new ();
     gtk_css_provider_load_from_string (self->animations_provider,
                                        "* { transition: none; }");
+  } else {
+    self->gtk_settings = gtk_settings_get_default ();
   }
+
+  g_signal_connect_object (self->gtk_settings, "notify::gtk-font-name",
+                           G_CALLBACK (update_fonts),
+                           self,
+                           G_CONNECT_SWAPPED);
 
   self->settings = adw_settings_get_default ();
 
@@ -465,13 +688,34 @@ adw_style_manager_constructed (GObject *object)
                            self,
                            G_CONNECT_SWAPPED);
   g_signal_connect_object (self->settings,
+                           "notify::system-supports-accent-colors",
+                           G_CALLBACK (notify_system_supports_accent_colors_cb),
+                           self,
+                           G_CONNECT_SWAPPED);
+  g_signal_connect_object (self->settings,
+                           "notify::accent-color",
+                           G_CALLBACK (notify_accent_color_cb),
+                           self,
+                           G_CONNECT_SWAPPED);
+  g_signal_connect_object (self->settings,
                            "notify::high-contrast",
                            G_CALLBACK (notify_high_contrast_cb),
                            self,
                            G_CONNECT_SWAPPED);
+  g_signal_connect_object (self->settings,
+                           "notify::document-font-name",
+                           G_CALLBACK (update_fonts),
+                           self,
+                           G_CONNECT_SWAPPED);
+  g_signal_connect_object (self->settings,
+                           "notify::monospace-font-name",
+                           G_CALLBACK (update_fonts),
+                           self,
+                           G_CONNECT_SWAPPED);
 
   update_dark (self);
-  update_stylesheet (self);
+  update_fonts (self);
+  update_stylesheet (self, UPDATE_ALL);
 }
 
 static void
@@ -483,6 +727,10 @@ adw_style_manager_dispose (GObject *object)
   g_clear_object (&self->provider);
   g_clear_object (&self->colors_provider);
   g_clear_object (&self->animations_provider);
+  g_clear_object (&self->accent_provider);
+  g_clear_object (&self->fonts_provider);
+  g_clear_pointer (&self->document_font_name, g_free);
+  g_clear_pointer (&self->monospace_font_name, g_free);
 
   G_OBJECT_CLASS (adw_style_manager_parent_class)->dispose (object);
 }
@@ -514,6 +762,26 @@ adw_style_manager_get_property (GObject    *object,
 
   case PROP_HIGH_CONTRAST:
     g_value_set_boolean (value, adw_style_manager_get_high_contrast (self));
+    break;
+
+  case PROP_SYSTEM_SUPPORTS_ACCENT_COLORS:
+    g_value_set_boolean (value, adw_style_manager_get_system_supports_accent_colors (self));
+    break;
+
+  case PROP_ACCENT_COLOR:
+    g_value_set_enum (value, adw_style_manager_get_accent_color (self));
+    break;
+
+  case PROP_ACCENT_COLOR_RGBA:
+    g_value_take_boxed (value, adw_style_manager_get_accent_color_rgba (self));
+    break;
+
+  case PROP_DOCUMENT_FONT_NAME:
+    g_value_set_string (value, adw_style_manager_get_document_font_name (self));
+    break;
+
+  case PROP_MONOSPACE_FONT_NAME:
+    g_value_set_string (value, adw_style_manager_get_monospace_font_name (self));
     break;
 
   default:
@@ -554,7 +822,7 @@ adw_style_manager_class_init (AdwStyleManagerClass *klass)
   object_class->set_property = adw_style_manager_set_property;
 
   /**
-   * AdwStyleManager:display: (attributes org.gtk.Property.get=adw_style_manager_get_display)
+   * AdwStyleManager:display:
    *
    * The display the style manager is associated with.
    *
@@ -567,7 +835,7 @@ adw_style_manager_class_init (AdwStyleManagerClass *klass)
                          G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwStyleManager:color-scheme: (attributes org.gtk.Property.get=adw_style_manager_get_color_scheme org.gtk.Property.set=adw_style_manager_set_color_scheme)
+   * AdwStyleManager:color-scheme:
    *
    * The requested application color scheme.
    *
@@ -608,7 +876,7 @@ adw_style_manager_class_init (AdwStyleManagerClass *klass)
                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwStyleManager:system-supports-color-schemes: (attributes org.gtk.Property.get=adw_style_manager_get_system_supports_color_schemes)
+   * AdwStyleManager:system-supports-color-schemes:
    *
    * Whether the system supports color schemes.
    *
@@ -624,7 +892,7 @@ adw_style_manager_class_init (AdwStyleManagerClass *klass)
                           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwStyleManager:dark: (attributes org.gtk.Property.get=adw_style_manager_get_dark)
+   * AdwStyleManager:dark:
    *
    * Whether the application is using dark appearance.
    *
@@ -637,7 +905,7 @@ adw_style_manager_class_init (AdwStyleManagerClass *klass)
                           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwStyleManager:high-contrast: (attributes org.gtk.Property.get=adw_style_manager_get_high_contrast)
+   * AdwStyleManager:high-contrast:
    *
    * Whether the application is using high contrast appearance.
    *
@@ -647,6 +915,90 @@ adw_style_manager_class_init (AdwStyleManagerClass *klass)
     g_param_spec_boolean ("high-contrast", NULL, NULL,
                           FALSE,
                           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwStyleManager:system-supports-accent-colors:
+   *
+   * Whether the system supports accent colors.
+   *
+   * This property can be used to check if the current environment provides an
+   * accent color preference. For example, applications might want to show a
+   * preference for choosing accent color if it's set to `FALSE`.
+   *
+   * See [property@StyleManager:accent-color].
+   *
+   * Since: 1.6
+   */
+  props[PROP_SYSTEM_SUPPORTS_ACCENT_COLORS] =
+    g_param_spec_boolean ("system-supports-accent-colors", NULL, NULL,
+                          FALSE,
+                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwStyleManager:accent-color:
+   *
+   * The current system accent color.
+   *
+   * See also [property@StyleManager:accent-color-rgba].
+   *
+   * Since: 1.6
+   */
+  props[PROP_ACCENT_COLOR] =
+    g_param_spec_enum ("accent-color", NULL, NULL,
+                       ADW_TYPE_ACCENT_COLOR,
+                       ADW_ACCENT_COLOR_BLUE,
+                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwStyleManager:accent-color-rgba:
+   *
+   * The current system accent color as a `GdkRGBA`.
+   *
+   * Equivalent to calling [func@AccentColor.to_rgba] on the value of
+   * [property@StyleManager:accent-color].
+   *
+   * This is a background color. The matching foreground color is white.
+   *
+   * Since: 1.6
+   */
+  props[PROP_ACCENT_COLOR_RGBA] =
+    g_param_spec_boxed ("accent-color-rgba", NULL, NULL,
+                        GDK_TYPE_RGBA,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwStyleManager:document-font-name:
+   *
+   * The system document font.
+   *
+   * The font is in the same format as [property@Gtk.Settings:gtk-font-name],
+   * e.g. "Adwaita Sans 11".
+   *
+   * Use [func@Pango.FontDescription.from_string] to parse it.
+   *
+   * Since: 1.7
+   */
+  props[PROP_DOCUMENT_FONT_NAME] =
+    g_param_spec_string ("document-font-name", NULL, NULL,
+                         DEFAULT_DOCUMENT_FONT,
+                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwStyleManager:monospace-font-name:
+   *
+   * The system monospace font.
+   *
+   * The font is in the same format as [property@Gtk.Settings:gtk-font-name],
+   * e.g. "Adwaita Mono 11".
+   *
+   * Use [func@Pango.FontDescription.from_string] to parse it.
+   *
+   * Since: 1.7
+   */
+  props[PROP_MONOSPACE_FONT_NAME] =
+    g_param_spec_string ("monospace-font-name", NULL, NULL,
+                         DEFAULT_MONOSPACE_FONT,
+                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties (object_class, LAST_PROP, props);
 }
@@ -734,7 +1086,7 @@ adw_style_manager_get_for_display (GdkDisplay *display)
 }
 
 /**
- * adw_style_manager_get_display: (attributes org.gtk.Method.get_property=display)
+ * adw_style_manager_get_display:
  * @self: a style manager
  *
  * Gets the display the style manager is associated with.
@@ -753,7 +1105,7 @@ adw_style_manager_get_display (AdwStyleManager *self)
 }
 
 /**
- * adw_style_manager_get_color_scheme: (attributes org.gtk.Method.get_property=color-scheme)
+ * adw_style_manager_get_color_scheme:
  * @self: a style manager
  *
  * Gets the requested application color scheme.
@@ -769,7 +1121,7 @@ adw_style_manager_get_color_scheme (AdwStyleManager *self)
 }
 
 /**
- * adw_style_manager_set_color_scheme: (attributes org.gtk.Method.set_property=color-scheme)
+ * adw_style_manager_set_color_scheme:
  * @self: a style manager
  * @color_scheme: the color scheme
  *
@@ -837,7 +1189,7 @@ adw_style_manager_set_color_scheme (AdwStyleManager *self,
 }
 
 /**
- * adw_style_manager_get_system_supports_color_schemes: (attributes org.gtk.Method.get_property=system-supports-color-schemes)
+ * adw_style_manager_get_system_supports_color_schemes:
  * @self: a style manager
  *
  * Gets whether the system supports color schemes.
@@ -857,7 +1209,7 @@ adw_style_manager_get_system_supports_color_schemes (AdwStyleManager *self)
 }
 
 /**
- * adw_style_manager_get_dark: (attributes org.gtk.Method.get_property=dark)
+ * adw_style_manager_get_dark:
  * @self: a style manager
  *
  * Gets whether the application is using dark appearance.
@@ -876,7 +1228,7 @@ adw_style_manager_get_dark (AdwStyleManager *self)
 }
 
 /**
- * adw_style_manager_get_high_contrast: (attributes org.gtk.Method.get_property=high-contrast)
+ * adw_style_manager_get_high_contrast:
  * @self: a style manager
  *
  * Gets whether the application is using high contrast appearance.
@@ -891,4 +1243,130 @@ adw_style_manager_get_high_contrast (AdwStyleManager *self)
   g_return_val_if_fail (ADW_IS_STYLE_MANAGER (self), FALSE);
 
   return adw_settings_get_high_contrast (self->settings);
+}
+
+/**
+ * adw_style_manager_get_system_supports_accent_colors:
+ * @self: a style manager
+ *
+ * Gets whether the system supports accent colors.
+ *
+ * This can be used to check if the current environment provides an accent color
+ * preference. For example, applications might want to show a preference for
+ * choosing accent color if it's set to `FALSE`.
+ *
+ * See [property@StyleManager:accent-color].
+ *
+ * Returns: whether the system supports accent colors
+ *
+ * Since: 1.6
+ */
+gboolean
+adw_style_manager_get_system_supports_accent_colors (AdwStyleManager *self)
+{
+  g_return_val_if_fail (ADW_IS_STYLE_MANAGER (self), FALSE);
+
+  return adw_settings_get_system_supports_accent_colors (self->settings);
+}
+
+/**
+ * adw_style_manager_get_accent_color:
+ * @self: a style manager
+ *
+ * Gets the current system accent color.
+ *
+ * See also [property@StyleManager:accent-color-rgba].
+ *
+ * Returns: the current system accent color
+ *
+ * Since: 1.6
+ */
+AdwAccentColor
+adw_style_manager_get_accent_color (AdwStyleManager *self)
+{
+  g_return_val_if_fail (ADW_IS_STYLE_MANAGER (self), ADW_ACCENT_COLOR_BLUE);
+
+  return adw_settings_get_accent_color (self->settings);
+}
+
+/**
+ * adw_style_manager_get_accent_color_rgba:
+ * @self: a style manager
+ *
+ * Gets the current system accent color as a `GdkRGBA`.
+ *
+ * Equivalent to calling [func@AccentColor.to_rgba] on the value of
+ * [property@StyleManager:accent-color].
+ *
+ * This is a background color. The matching foreground color is white.
+ *
+ * Returns: the current system accent color
+ *
+ * Since: 1.6
+ */
+GdkRGBA *
+adw_style_manager_get_accent_color_rgba (AdwStyleManager *self)
+{
+  AdwAccentColor color;
+  GdkRGBA rgba;
+
+  g_return_val_if_fail (ADW_IS_STYLE_MANAGER (self), NULL);
+
+  color = adw_style_manager_get_accent_color (self);
+
+  adw_accent_color_to_rgba (color, &rgba);
+
+  return gdk_rgba_copy (&rgba);
+}
+
+/**
+ * adw_style_manager_get_document_font_name:
+ * @self: a style manager
+ *
+ * Gets the system document font.
+ *
+ * The font is in the same format as [property@Gtk.Settings:gtk-font-name],
+ * e.g. "Adwaita Sans 11".
+ *
+ * Use [func@Pango.FontDescription.from_string] to parse it.
+ *
+ * Returns: the system document font
+ *
+ * Since: 1.7
+ */
+const char *
+adw_style_manager_get_document_font_name (AdwStyleManager *self)
+{
+  g_return_val_if_fail (ADW_IS_STYLE_MANAGER (self), NULL);
+
+  if (!self->document_font_name)
+    return DEFAULT_DOCUMENT_FONT;
+
+  return self->document_font_name;
+}
+
+/**
+ * adw_style_manager_get_monospace_font_name:
+ * @self: a style manager
+ *
+ * Gets the system monospace font.
+ *
+ * The font is in the same format as [property@Gtk.Settings:gtk-font-name],
+ * e.g. "Adwaita Mono 11".
+ *
+ * Use [func@Pango.FontDescription.from_string] to parse it.
+ *
+ * Returns: the system monospace font
+ *
+ * Since: 1.7
+ */
+const char *
+adw_style_manager_get_monospace_font_name (AdwStyleManager *self)
+{
+  g_return_val_if_fail (ADW_IS_STYLE_MANAGER (self), NULL);
+
+  if (!self->document_font_name)
+    return DEFAULT_MONOSPACE_FONT;
+
+  return self->monospace_font_name;
 }

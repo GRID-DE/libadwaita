@@ -29,7 +29,7 @@
  *   `ADW_DIALOG_BOTTOM_SHEET` depending on available size.
  * @ADW_DIALOG_FLOATING: Present dialog as a centered floating window.
  * @ADW_DIALOG_BOTTOM_SHEET: Present dialog as a bottom sheet.
-
+ *
  * Describes the available presentation modes for [class@Dialog].
  *
  * New values may be added to this enumeration over time.
@@ -78,10 +78,14 @@
  * Use [method@Dialog.force_close] to close the dialog even when `can-close` is set to
  * `FALSE`.
  *
+ * `AdwDialog` is transient and doesn't integrate with the window below it, for
+ * example it's not possible to collapse it into a bottom bar. See
+ * [class@BottomSheet] for persistent and more tightly integrated bottom sheets.
+ *
  * ## Header Bar Integration
  *
  * When placed inside an `AdwDialog`, [class@HeaderBar] will display the dialog
- * title intead of window title. It will also adjust the decoration layout to
+ * title instead of window title. It will also adjust the decoration layout to
  * ensure it always has a close button and nothing else. Set
  * [property@HeaderBar:show-start-title-buttons] and
  * [property@HeaderBar:show-end-title-buttons] to `FALSE` to remove it if it's
@@ -128,6 +132,7 @@ typedef struct
   AdwDialogPresentationMode presentation_mode;
   AdwBreakpoint *portrait_breakpoint;
   AdwBreakpoint *landscape_breakpoint;
+  AdwBreakpoint *both_breakpoint;
 
   GtkWidget *focus_widget;
   GtkWidget *default_widget;
@@ -139,14 +144,17 @@ typedef struct
   gpointer user_data;
 
   GtkWidget *window;
+  GtkEventController *window_close_controller;
   gboolean force_closing;
 } AdwDialogPrivate;
 
 static void adw_dialog_buildable_init (GtkBuildableIface *iface);
+static void adw_dialog_shortcut_manager_init (GtkShortcutManagerInterface *iface);
 
 G_DEFINE_TYPE_WITH_CODE (AdwDialog, adw_dialog, GTK_TYPE_WIDGET,
                          G_ADD_PRIVATE (AdwDialog)
-                         G_IMPLEMENT_INTERFACE (GTK_TYPE_BUILDABLE, adw_dialog_buildable_init))
+                         G_IMPLEMENT_INTERFACE (GTK_TYPE_BUILDABLE, adw_dialog_buildable_init)
+                         G_IMPLEMENT_INTERFACE (GTK_TYPE_SHORTCUT_MANAGER, adw_dialog_shortcut_manager_init))
 
 static GtkBuildableIface *parent_buildable_iface;
 
@@ -175,10 +183,22 @@ enum {
 
 static guint signals[SIGNAL_LAST_SIGNAL];
 
+static void
+child_breakpoint_bin_notify_current_breakpoint_cb (AdwDialog *self)
+{
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_CURRENT_BREAKPOINT]);
+}
+
 static gboolean
 map_tick_cb (AdwDialog *self)
 {
   AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
+
+  if (priv->force_closing) {
+    priv->tick_cb_id = 0;
+    priv->ticks = 0;
+    return G_SOURCE_REMOVE;
+  }
 
   priv->ticks++;
 
@@ -202,7 +222,8 @@ map_tick_cb (AdwDialog *self)
 }
 
 static void
-sheet_closing_cb (AdwDialog *self)
+sheet_closing_cb (GtkWidget *sheet,
+                  AdwDialog *self)
 {
   AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
 
@@ -213,12 +234,19 @@ sheet_closing_cb (AdwDialog *self)
 }
 
 static void
-sheet_closed_cb (AdwDialog *self)
+sheet_closed_cb (GtkWidget *sheet,
+                 AdwDialog *self)
 {
   AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
 
   if (priv->remove_callback)
     priv->remove_callback (self, priv->user_data);
+}
+
+static void
+sheet_close_attempt_cb (AdwDialog *self)
+{
+  g_signal_emit (self, signals[SIGNAL_CLOSE_ATTEMPT], 0);
 }
 
 static void
@@ -293,11 +321,14 @@ set_focus (AdwDialog *self,
                                           focus_widget_notify_visible_cb, self);
     g_signal_handlers_disconnect_by_func (priv->focus_widget,
                                           focus_widget_notify_parent_cb, self);
+    g_clear_weak_pointer (&priv->focus_widget);
   }
 
   priv->focus_widget = focus;
 
   if (priv->focus_widget) {
+    g_object_add_weak_pointer (G_OBJECT (priv->focus_widget), (gpointer *) &priv->focus_widget);
+
     g_signal_connect_swapped (priv->focus_widget, "hide",
                               G_CALLBACK (unset_focus_widget), self);
     g_signal_connect_swapped (priv->focus_widget, "notify::visible",
@@ -314,9 +345,16 @@ window_notify_focus_cb (AdwDialog  *self,
                         GParamSpec *pspec,
                         GtkRoot    *root)
 {
+  AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
   GtkWidget *focus = gtk_root_get_focus (root);
 
   if (focus && !gtk_widget_is_ancestor (focus, GTK_WIDGET (self)))
+    focus = NULL;
+
+  if (priv->floating_sheet && focus == adw_floating_sheet_get_sheet_bin (priv->floating_sheet))
+    focus = NULL;
+
+  if (priv->bottom_sheet && focus == adw_bottom_sheet_get_sheet_bin (priv->bottom_sheet))
     focus = NULL;
 
   set_focus (self, focus);
@@ -419,12 +457,32 @@ update_presentation (AdwDialog *self)
   if (priv->window)
     return;
 
-  g_object_ref (priv->child_breakpoint_bin);
-
   breakpoint =
     adw_breakpoint_bin_get_current_breakpoint (ADW_BREAKPOINT_BIN (priv->bin));
   use_bottom_sheet = priv->presentation_mode == ADW_DIALOG_BOTTOM_SHEET ||
-                     breakpoint != NULL;
+                     (priv->presentation_mode == ADW_DIALOG_AUTO && breakpoint != NULL);
+
+  if (breakpoint == priv->both_breakpoint) {
+    gtk_widget_add_css_class (GTK_WIDGET (self), "narrow");
+    gtk_widget_add_css_class (GTK_WIDGET (self), "short");
+  } else if (breakpoint == priv->portrait_breakpoint) {
+    gtk_widget_add_css_class (GTK_WIDGET (self), "narrow");
+    gtk_widget_remove_css_class (GTK_WIDGET (self), "short");
+  } else if (breakpoint == priv->landscape_breakpoint) {
+    gtk_widget_remove_css_class (GTK_WIDGET (self), "narrow");
+    gtk_widget_add_css_class (GTK_WIDGET (self), "short");
+  } else {
+    gtk_widget_remove_css_class (GTK_WIDGET (self), "narrow");
+    gtk_widget_remove_css_class (GTK_WIDGET (self), "short");
+  }
+
+  if (use_bottom_sheet && priv->bottom_sheet)
+    return;
+
+  if (!use_bottom_sheet && priv->floating_sheet)
+    return;
+
+  g_object_ref (priv->child_breakpoint_bin);
 
   root = gtk_widget_get_root (GTK_WIDGET (self));
 
@@ -451,33 +509,28 @@ update_presentation (AdwDialog *self)
   if (use_bottom_sheet) {
     priv->bottom_sheet = ADW_BOTTOM_SHEET (adw_bottom_sheet_new ());
 
-    adw_bottom_sheet_set_dialog_mode (priv->bottom_sheet, TRUE);
     adw_bottom_sheet_set_min_natural_width (priv->bottom_sheet, 360);
 
     if (!priv->first_map)
       adw_bottom_sheet_set_open (priv->bottom_sheet, TRUE);
 
+    adw_bottom_sheet_set_full_width (priv->bottom_sheet, FALSE);
     adw_bottom_sheet_set_show_drag_handle (priv->bottom_sheet, FALSE);
     adw_bottom_sheet_set_sheet (priv->bottom_sheet, priv->child_breakpoint_bin);
     adw_bottom_sheet_set_can_close (priv->bottom_sheet, priv->can_close);
     adw_breakpoint_bin_set_child (ADW_BREAKPOINT_BIN (priv->bin),
                                   GTK_WIDGET (priv->bottom_sheet));
 
-    g_signal_connect_swapped (priv->bottom_sheet, "closing",
-                              G_CALLBACK (sheet_closing_cb), self);
-    g_signal_connect_swapped (priv->bottom_sheet, "closed",
-                              G_CALLBACK (sheet_closed_cb), self);
+    adw_bottom_sheet_set_callbacks (priv->bottom_sheet,
+                                    (GFunc) sheet_closing_cb,
+                                    (GFunc) sheet_closed_cb,
+                                    self);
+
+    g_signal_connect_swapped (priv->bottom_sheet, "close-attempt",
+                              G_CALLBACK (sheet_close_attempt_cb), self);
 
     gtk_widget_add_css_class (GTK_WIDGET (self), "bottom-sheet");
     gtk_widget_remove_css_class (GTK_WIDGET (self), "floating");
-
-    if (breakpoint == priv->portrait_breakpoint) {
-      gtk_widget_add_css_class (GTK_WIDGET (self), "portrait");
-      gtk_widget_remove_css_class (GTK_WIDGET (self), "landscape");
-    } else {
-      gtk_widget_add_css_class (GTK_WIDGET (self), "landscape");
-      gtk_widget_remove_css_class (GTK_WIDGET (self), "portrait");
-    }
   } else {
     priv->floating_sheet = ADW_FLOATING_SHEET (adw_floating_sheet_new ());
 
@@ -485,13 +538,17 @@ update_presentation (AdwDialog *self)
       adw_floating_sheet_set_open (priv->floating_sheet, TRUE);
 
     adw_floating_sheet_set_child (priv->floating_sheet, priv->child_breakpoint_bin);
+    adw_floating_sheet_set_can_close (priv->floating_sheet, priv->can_close);
     adw_breakpoint_bin_set_child (ADW_BREAKPOINT_BIN (priv->bin),
                                   GTK_WIDGET (priv->floating_sheet));
 
-    g_signal_connect_swapped (priv->floating_sheet, "closing",
-                              G_CALLBACK (sheet_closing_cb), self);
-    g_signal_connect_swapped (priv->floating_sheet, "closed",
-                              G_CALLBACK (sheet_closed_cb), self);
+    adw_floating_sheet_set_callbacks (priv->floating_sheet,
+                                      (GFunc) sheet_closing_cb,
+                                      (GFunc) sheet_closed_cb,
+                                      self);
+
+    g_signal_connect_swapped (priv->floating_sheet, "close-attempt",
+                              G_CALLBACK (sheet_close_attempt_cb), self);
 
     gtk_widget_add_css_class (GTK_WIDGET (self), "floating");
     gtk_widget_remove_css_class (GTK_WIDGET (self), "bottom-sheet");
@@ -501,7 +558,7 @@ update_presentation (AdwDialog *self)
 
   if (focus) {
     gtk_widget_grab_focus (focus);
-    g_object_remove_weak_pointer (G_OBJECT (focus), (gpointer *) &focus);
+    g_clear_weak_pointer (&focus);
   }
 
   g_object_unref (priv->child_breakpoint_bin);
@@ -511,42 +568,11 @@ static void
 update_presentation_mode (AdwDialog *self)
 {
   AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
-  gboolean had_breakpoint = (priv->portrait_breakpoint != NULL);
 
-  if (priv->window)
+  if (priv->window || !priv->bin)
     return;
 
-  switch (priv->presentation_mode) {
-  case ADW_DIALOG_AUTO:
-    g_assert (!priv->portrait_breakpoint);
-    g_assert (!priv->landscape_breakpoint);
-
-    priv->landscape_breakpoint = adw_breakpoint_new (adw_breakpoint_condition_parse (LANDSCAPE_CONDITION));
-    adw_breakpoint_bin_add_breakpoint (ADW_BREAKPOINT_BIN (priv->bin),
-                                       priv->landscape_breakpoint);
-
-    priv->portrait_breakpoint = adw_breakpoint_new (adw_breakpoint_condition_parse (PORTRAIT_CONDITION));
-    adw_breakpoint_bin_add_breakpoint (ADW_BREAKPOINT_BIN (priv->bin),
-                                       priv->portrait_breakpoint);
-    break;
-  case ADW_DIALOG_FLOATING:
-  case ADW_DIALOG_BOTTOM_SHEET:
-    if (priv->portrait_breakpoint) {
-      adw_breakpoint_bin_remove_breakpoint (ADW_BREAKPOINT_BIN (priv->bin),
-                                            priv->portrait_breakpoint);
-      priv->portrait_breakpoint = NULL;
-
-      adw_breakpoint_bin_remove_breakpoint (ADW_BREAKPOINT_BIN (priv->bin),
-                                            priv->landscape_breakpoint);
-      priv->landscape_breakpoint = NULL;
-    }
-    break;
-  default:
-    g_assert_not_reached ();
-  }
-
-  if (had_breakpoint != (priv->portrait_breakpoint != NULL))
-    update_presentation (self);
+  update_presentation (self);
 }
 
 static void
@@ -566,13 +592,18 @@ window_close_request_cb (AdwDialog *self)
 {
   AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
 
-  if (priv->force_closing)
-    return GDK_EVENT_PROPAGATE;
-
-  if (adw_dialog_close (self))
+  if (priv->force_closing || adw_dialog_close (self))
     return GDK_EVENT_PROPAGATE;
 
   return GDK_EVENT_STOP;
+}
+
+static gboolean
+maybe_close_cb (GtkWidget *widget,
+                GVariant  *args,
+                AdwDialog *self)
+{
+  return adw_dialog_close (self);
 }
 
 static void
@@ -581,6 +612,7 @@ present_as_window (AdwDialog *self,
 {
   AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
   GtkWidget *titlebar;
+  GtkShortcut *shortcut;
 
   if (priv->window) {
     gtk_window_present (GTK_WINDOW (priv->window));
@@ -588,10 +620,20 @@ present_as_window (AdwDialog *self,
   }
 
   gtk_widget_add_css_class (GTK_WIDGET (self), "floating");
+  gtk_widget_set_focusable (GTK_WIDGET (self), TRUE);
 
   priv->window = gtk_window_new ();
   gtk_window_set_resizable (GTK_WINDOW (priv->window), FALSE);
   gtk_widget_add_css_class (priv->window, "dialog-window");
+
+  /* Esc to close */
+  shortcut = gtk_shortcut_new (gtk_keyval_trigger_new (GDK_KEY_Escape, 0),
+                               gtk_callback_action_new ((GtkShortcutFunc) maybe_close_cb, self, NULL));
+
+  priv->window_close_controller = gtk_shortcut_controller_new ();
+  gtk_shortcut_controller_set_scope (GTK_SHORTCUT_CONTROLLER (priv->window_close_controller), GTK_SHORTCUT_SCOPE_MANAGED);
+  gtk_shortcut_controller_add_shortcut (GTK_SHORTCUT_CONTROLLER (priv->window_close_controller), shortcut);
+  gtk_widget_add_controller (GTK_WIDGET (self), priv->window_close_controller);
 
   if (parent) {
     GtkRoot *root = gtk_widget_get_root (parent);
@@ -715,6 +757,51 @@ open_inspector_cb (AdwDialog *self,
   return ret;
 }
 
+static gboolean
+ensure_focus (AdwDialog *self)
+{
+  AdwDialogPrivate *priv = adw_dialog_get_instance_private (self);
+  GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (self));
+  GtkWidget *focus;
+
+  if (!root)
+    return FALSE;
+
+  focus = gtk_root_get_focus (root);
+
+  if (focus)
+    return FALSE;
+
+  /* No focusable widgets, focus something intermediate instead */
+  if (priv->floating_sheet)
+    return gtk_widget_grab_focus (GTK_WIDGET (priv->floating_sheet));
+
+  if (priv->bottom_sheet)
+    return gtk_widget_grab_focus (GTK_WIDGET (priv->bottom_sheet));
+
+  if (priv->window)
+    return adw_widget_grab_focus_self (GTK_WIDGET (self));
+
+  return TRUE;
+}
+
+static gboolean
+toggle_adaptive_preview_cb (AdwDialog *self)
+{
+  GtkRoot *root;
+  gboolean open;
+
+  if (!adw_get_inspector_keybinding_enabled ())
+    return GDK_EVENT_PROPAGATE;
+
+  root = gtk_widget_get_root (GTK_WIDGET (self));
+
+  g_object_get (root, "adaptive-preview", &open, NULL);
+  g_object_set (root, "adaptive-preview", !open, NULL);
+
+  return GDK_EVENT_STOP;
+}
+
 static void
 adw_dialog_root (GtkWidget *widget)
 {
@@ -772,6 +859,16 @@ adw_dialog_map (GtkWidget *widget)
 }
 
 static gboolean
+adw_dialog_focus (GtkWidget        *widget,
+                  GtkDirectionType  direction)
+{
+  if (adw_widget_focus_child (widget, direction))
+    return TRUE;
+
+  return ensure_focus (ADW_DIALOG (widget));
+}
+
+static gboolean
 adw_dialog_grab_focus (GtkWidget *widget)
 {
   AdwDialog *self = ADW_DIALOG (widget);
@@ -782,7 +879,8 @@ adw_dialog_grab_focus (GtkWidget *widget)
 
   GTK_WIDGET_GET_CLASS (widget)->move_focus (GTK_WIDGET (widget),
                                              GTK_DIR_TAB_FORWARD);
-  return TRUE;
+
+  return ensure_focus (ADW_DIALOG (widget));
 }
 
 static void
@@ -798,8 +896,10 @@ adw_dialog_dispose (GObject *object)
                                           focus_widget_notify_visible_cb, self);
     g_signal_handlers_disconnect_by_func (priv->focus_widget,
                                           focus_widget_notify_parent_cb, self);
-    priv->focus_widget = NULL;
+    g_clear_weak_pointer (&priv->focus_widget);
   }
+
+  g_clear_weak_pointer (&priv->last_focus);
 
   if (priv->default_widget) {
     g_signal_handlers_disconnect_by_func (priv->default_widget,
@@ -818,7 +918,8 @@ adw_dialog_dispose (GObject *object)
     priv->floating_sheet = NULL;
     priv->child_breakpoint_bin = NULL;
     priv->child = NULL;
-  } else if (priv->window) {
+  } else if (priv->child_breakpoint_bin &&
+             gtk_widget_get_parent (priv->child_breakpoint_bin) == GTK_WIDGET (self)) {
     /* It's an window-backed dialog */
     g_clear_pointer (&priv->child_breakpoint_bin, gtk_widget_unparent);
     priv->child = NULL;
@@ -931,6 +1032,16 @@ adw_dialog_set_property (GObject      *object,
 }
 
 static void
+adw_dialog_real_closed (AdwDialog *dialog)
+{
+}
+
+static void
+adw_dialog_real_close_attempt (AdwDialog *dialog)
+{
+}
+
+static void
 adw_dialog_class_init (AdwDialogClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
@@ -944,13 +1055,16 @@ adw_dialog_class_init (AdwDialogClass *klass)
   widget_class->root = adw_dialog_root;
   widget_class->unroot = adw_dialog_unroot;
   widget_class->map = adw_dialog_map;
-  widget_class->focus = adw_widget_focus_child;
+  widget_class->focus = adw_dialog_focus;
   widget_class->grab_focus = adw_dialog_grab_focus;
   widget_class->contains = adw_widget_contains_passthrough;
   widget_class->compute_expand = adw_widget_compute_expand;
 
+  klass->closed = adw_dialog_real_closed;
+  klass->close_attempt = adw_dialog_real_close_attempt;
+
   /**
-   * AdwDialog:child: (attributes org.gtk.Property.get=adw_dialog_get_child org.gtk.Property.set=adw_dialog_set_child)
+   * AdwDialog:child:
    *
    * The child widget of the `AdwDialog`.
    *
@@ -962,7 +1076,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:title: (attributes org.gtk.Property.get=adw_dialog_get_title org.gtk.Property.set=adw_dialog_set_title)
+   * AdwDialog:title:
    *
    * The title of the dialog.
    *
@@ -974,7 +1088,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:can-close: (attributes org.gtk.Property.get=adw_dialog_get_can_close org.gtk.Property.set=adw_dialog_set_can_close)
+   * AdwDialog:can-close:
    *
    * Whether the dialog can be closed.
    *
@@ -991,7 +1105,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:content-width: (attributes org.gtk.Property.get=adw_dialog_get_content_width org.gtk.Property.set=adw_dialog_set_content_width)
+   * AdwDialog:content-width:
    *
    * The width of the dialog's contents.
    *
@@ -1007,7 +1121,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:content-height: (attributes org.gtk.Property.get=adw_dialog_get_content_height org.gtk.Property.set=adw_dialog_set_content_height)
+   * AdwDialog:content-height:
    *
    * The height of the dialog's contents.
    *
@@ -1023,7 +1137,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:follows-content-size: (attributes org.gtk.Property.get=adw_dialog_get_follows_content_size org.gtk.Property.set=adw_dialog_set_follows_content_size)
+   * AdwDialog:follows-content-size:
    *
    * Whether to size content automatically.
    *
@@ -1041,7 +1155,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:presentation-mode: (attributes org.gtk.Property.get=adw_dialog_get_presentation_mode org.gtk.Property.set=adw_dialog_set_presentation_mode)
+   * AdwDialog:presentation-mode:
    *
    * The dialog's presentation mode.
    *
@@ -1064,7 +1178,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:focus-widget: (attributes org.gtk.Property.get=adw_dialog_get_focus org.gtk.Property.set=adw_dialog_set_focus)
+   * AdwDialog:focus-widget: (getter get_focus) (setter set_focus):
    *
    * The focus widget.
    *
@@ -1076,7 +1190,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:default-widget: (attributes org.gtk.Property.get=adw_dialog_get_default_widget org.gtk.Property.set=adw_dialog_set_default_widget)
+   * AdwDialog:default-widget:
    *
    * The default widget.
    *
@@ -1090,7 +1204,7 @@ adw_dialog_class_init (AdwDialogClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwDialog:current-breakpoint: (attributes org.gtk.Property.get=adw_dialog_get_current_breakpoint)
+   * AdwDialog:current-breakpoint:
    *
    * The current breakpoint.
    *
@@ -1176,12 +1290,12 @@ adw_dialog_class_init (AdwDialogClass *klass)
                                 (GtkShortcutFunc) open_inspector_cb, "b", FALSE);
   gtk_widget_class_add_binding (widget_class, GDK_KEY_D, GDK_CONTROL_MASK | GDK_SHIFT_MASK,
                                 (GtkShortcutFunc) open_inspector_cb, "b", TRUE);
-
-  gtk_widget_class_add_binding (widget_class, GDK_KEY_Escape, 0,
-                                (GtkShortcutFunc) adw_dialog_close, NULL);
+  gtk_widget_class_add_binding (widget_class, GDK_KEY_M, GDK_CONTROL_MASK | GDK_SHIFT_MASK,
+                                (GtkShortcutFunc) toggle_adaptive_preview_cb, NULL);
 
   gtk_widget_class_set_layout_manager_type (widget_class, GTK_TYPE_BIN_LAYOUT);
   gtk_widget_class_set_css_name (widget_class, "dialog");
+  gtk_widget_class_set_accessible_role (widget_class, GTK_ACCESSIBLE_ROLE_DIALOG);
 }
 
 static void
@@ -1197,7 +1311,10 @@ adw_dialog_init (AdwDialog *self)
   priv->follows_content_size = FALSE;
   priv->presentation_mode = ADW_DIALOG_AUTO;
 
+  gtk_widget_set_limit_events (GTK_WIDGET (self), TRUE);
+
   priv->child_breakpoint_bin = adw_breakpoint_bin_new ();
+  gtk_widget_set_overflow (priv->child_breakpoint_bin, GTK_OVERFLOW_VISIBLE);
   adw_breakpoint_bin_set_warning_widget (ADW_BREAKPOINT_BIN (priv->child_breakpoint_bin),
                                          GTK_WIDGET (self));
   g_object_bind_property (self, "width-request",
@@ -1206,6 +1323,10 @@ adw_dialog_init (AdwDialog *self)
   g_object_bind_property (self, "height-request",
                           priv->child_breakpoint_bin, "height-request",
                           G_BINDING_DEFAULT);
+  g_signal_connect_swapped (priv->child_breakpoint_bin,
+                            "notify::current-breakpoint",
+                            G_CALLBACK (child_breakpoint_bin_notify_current_breakpoint_cb),
+                            self);
 }
 
 static void
@@ -1231,6 +1352,11 @@ adw_dialog_buildable_init (GtkBuildableIface *iface)
   iface->add_child = adw_dialog_buildable_add_child;
 }
 
+static void
+adw_dialog_shortcut_manager_init (GtkShortcutManagerInterface *iface)
+{
+}
+
 /**
  * adw_dialog_new:
  *
@@ -1247,7 +1373,7 @@ adw_dialog_new (void)
 }
 
 /**
- * adw_dialog_get_child: (attributes org.gtk.Method.get_property=child)
+ * adw_dialog_get_child:
  * @self: a dialog
  *
  * Gets the child widget of @self.
@@ -1269,7 +1395,7 @@ adw_dialog_get_child (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_child: (attributes org.gtk.Method.set_property=child)
+ * adw_dialog_set_child:
  * @self: a dialog
  * @child: (nullable): the child widget
  *
@@ -1286,13 +1412,13 @@ adw_dialog_set_child (AdwDialog *self,
   g_return_if_fail (ADW_IS_DIALOG (self));
   g_return_if_fail (child == NULL || GTK_IS_WIDGET (child));
 
-  if (child)
-    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
-
   priv = adw_dialog_get_instance_private (self);
 
   if (priv->child == child)
     return;
+
+  if (child)
+    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
 
   priv->child = child;
 
@@ -1302,7 +1428,7 @@ adw_dialog_set_child (AdwDialog *self,
 }
 
 /**
- * adw_dialog_get_title: (attributes org.gtk.Method.get_property=title)
+ * adw_dialog_get_title:
  * @self: a dialog
  *
  * Gets the title of @self.
@@ -1324,7 +1450,7 @@ adw_dialog_get_title (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_title: (attributes org.gtk.Method.set_property=title)
+ * adw_dialog_set_title:
  * @self: a dialog
  * @title: (transfer none): the new title
  *
@@ -1346,10 +1472,14 @@ adw_dialog_set_title (AdwDialog  *self,
     return;
 
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_TITLE]);
+
+  gtk_accessible_update_property (GTK_ACCESSIBLE (self),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, priv->title,
+                                  -1);
 }
 
 /**
- * adw_dialog_get_can_close: (attributes org.gtk.Method.get_property=can-close)
+ * adw_dialog_get_can_close:
  * @self: a dialog
  *
  * Gets whether @self can be closed.
@@ -1371,7 +1501,7 @@ adw_dialog_get_can_close (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_can_close: (attributes org.gtk.Method.set_property=can-close)
+ * adw_dialog_set_can_close:
  * @self: a dialog
  * @can_close: whether to allow closing
  *
@@ -1404,11 +1534,14 @@ adw_dialog_set_can_close (AdwDialog *self,
   if (priv->bottom_sheet)
     adw_bottom_sheet_set_can_close (priv->bottom_sheet, can_close);
 
+  if (priv->floating_sheet)
+    adw_floating_sheet_set_can_close (priv->floating_sheet, can_close);
+
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_CAN_CLOSE]);
 }
 
 /**
- * adw_dialog_get_content_width: (attributes org.gtk.Method.get_property=content-width)
+ * adw_dialog_get_content_width:
  * @self: a dialog
  *
  * Gets the width of the dialog's contents.
@@ -1430,7 +1563,7 @@ adw_dialog_get_content_width (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_content_width: (attributes org.gtk.Method.set_property=content-width)
+ * adw_dialog_set_content_width:
  * @self: a dialog
  * @content_width: the content width
  *
@@ -1458,7 +1591,7 @@ adw_dialog_set_content_width (AdwDialog *self,
 }
 
 /**
- * adw_dialog_get_content_height: (attributes org.gtk.Method.get_property=content-height)
+ * adw_dialog_get_content_height:
  * @self: a dialog
  *
  * Gets the height of the dialog's contents.
@@ -1480,7 +1613,7 @@ adw_dialog_get_content_height (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_content_height: (attributes org.gtk.Method.set_property=content-height)
+ * adw_dialog_set_content_height:
  * @self: a dialog
  * @content_height: the content height
  *
@@ -1508,7 +1641,7 @@ adw_dialog_set_content_height (AdwDialog *self,
 }
 
 /**
- * adw_dialog_get_follows_content_size: (attributes org.gtk.Method.get_property=follows-content-size)
+ * adw_dialog_get_follows_content_size:
  * @self: a dialog
  *
  * Gets whether to size content of @self automatically.
@@ -1530,7 +1663,7 @@ adw_dialog_get_follows_content_size (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_follows_content_size: (attributes org.gtk.Method.set_property=follows-content-size)
+ * adw_dialog_set_follows_content_size:
  * @self: a dialog
  * @follows_content_size: whether to size content automatically
  *
@@ -1567,7 +1700,7 @@ adw_dialog_set_follows_content_size (AdwDialog *self,
 }
 
 /**
- * adw_dialog_get_presentation_mode: (attributes org.gtk.Method.get_property=presentation-mode)
+ * adw_dialog_get_presentation_mode:
  * @self: a dialog
  *
  * Gets presentation mode for @self.
@@ -1589,7 +1722,7 @@ adw_dialog_get_presentation_mode (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_presentation_mode: (attributes org.gtk.Method.set_property=presentation-mode)
+ * adw_dialog_set_presentation_mode:
  * @self: a dialog
  * @presentation_mode: the new presentation mode
  *
@@ -1630,7 +1763,7 @@ adw_dialog_set_presentation_mode (AdwDialog                 *self,
 }
 
 /**
- * adw_dialog_get_focus: (attributes org.gtk.Method.get_property=focus-widget)
+ * adw_dialog_get_focus: (get-property focus-widget)
  * @self: a dialog
  *
  * Gets the focus widget for @self.
@@ -1652,7 +1785,7 @@ adw_dialog_get_focus (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_focus: (attributes org.gtk.Method.set_property=focus-widget)
+ * adw_dialog_set_focus: (set-property focus-widget)
  * @self: a dialog
  * @focus: (nullable) (transfer none): the focus widget
  *
@@ -1702,7 +1835,7 @@ adw_dialog_set_focus (AdwDialog *self,
 }
 
 /**
- * adw_dialog_get_default_widget: (attributes org.gtk.Method.get_property=default-widget)
+ * adw_dialog_get_default_widget:
  * @self: a dialog
  *
  * Gets the default widget for @self.
@@ -1724,7 +1857,7 @@ adw_dialog_get_default_widget (AdwDialog *self)
 }
 
 /**
- * adw_dialog_set_default_widget: (attributes org.gtk.Method.set_property=default-widget)
+ * adw_dialog_set_default_widget:
  * @self: a dialog
  * @default_widget: (nullable) (transfer none): the default widget
  *
@@ -1807,15 +1940,32 @@ adw_dialog_close (AdwDialog *self)
 
   priv = adw_dialog_get_instance_private (self);
 
+  if (!gtk_widget_get_parent (GTK_WIDGET (self))) {
+    g_critical ("Trying to close %s %p that's not presented", G_OBJECT_TYPE_NAME (self), self);
+    return FALSE;
+  }
+
   if (!priv->can_close) {
     g_signal_emit (self, signals[SIGNAL_CLOSE_ATTEMPT], 0);
     return FALSE;
   }
 
-  if (priv->window)
-    gtk_window_close (GTK_WINDOW (priv->window));
-  else
+  if (priv->window) {
+    GtkWidget *window = priv->window;
+    priv->window = NULL;
+
+    gtk_widget_remove_controller (GTK_WIDGET (self), priv->window_close_controller);
+    priv->window_close_controller = NULL;
+
+    if (priv->closing_callback)
+      priv->closing_callback (self, priv->user_data);
+
+    g_signal_emit (self, signals[SIGNAL_CLOSED], 0);
+
+    gtk_window_close (GTK_WINDOW (window));
+  } else {
     adw_dialog_force_close (self);
+  }
 
   return TRUE;
 }
@@ -1880,7 +2030,7 @@ adw_dialog_add_breakpoint (AdwDialog     *self,
 }
 
 /**
- * adw_dialog_get_current_breakpoint: (attributes org.gtk.Method.get_property=current-breakpoint)
+ * adw_dialog_get_current_breakpoint:
  * @self: a dialog
  *
  * Gets the current breakpoint.
@@ -1984,6 +2134,14 @@ adw_dialog_present (AdwDialog *self,
     adw_breakpoint_bin_set_pass_through (ADW_BREAKPOINT_BIN (priv->bin), TRUE);
     adw_breakpoint_bin_set_warnings (ADW_BREAKPOINT_BIN (priv->bin), FALSE, TRUE);
 
+    priv->landscape_breakpoint = adw_breakpoint_new (adw_breakpoint_condition_parse (LANDSCAPE_CONDITION));
+    priv->portrait_breakpoint = adw_breakpoint_new (adw_breakpoint_condition_parse (PORTRAIT_CONDITION));
+    priv->both_breakpoint = adw_breakpoint_new (adw_breakpoint_condition_parse (PORTRAIT_CONDITION " and " LANDSCAPE_CONDITION));
+
+    adw_breakpoint_bin_add_breakpoint (ADW_BREAKPOINT_BIN (priv->bin), priv->landscape_breakpoint);
+    adw_breakpoint_bin_add_breakpoint (ADW_BREAKPOINT_BIN (priv->bin), priv->portrait_breakpoint);
+    adw_breakpoint_bin_add_breakpoint (ADW_BREAKPOINT_BIN (priv->bin), priv->both_breakpoint);
+
     gtk_widget_set_parent (priv->bin, GTK_WIDGET (self));
 
     g_signal_connect_swapped (priv->bin, "notify::current-breakpoint",
@@ -2039,19 +2197,22 @@ adw_dialog_set_shadowed (AdwDialog *self,
 
   shadowed = !!shadowed;
 
-  if (shadowed)
-    g_set_weak_pointer (&priv->last_focus, priv->focus_widget);
+  if (shadowed) {
+    GtkWidget *focus = priv->focus_widget;
+
+    while (focus && !gtk_widget_get_mapped (focus))
+      focus = gtk_widget_get_parent (focus);
+
+    if (focus && gtk_widget_is_ancestor (focus, priv->child_breakpoint_bin))
+      g_set_weak_pointer (&priv->last_focus, focus);
+  }
 
   gtk_widget_set_can_focus (priv->bin, !shadowed);
   gtk_widget_set_can_target (priv->bin, !shadowed);
 
   if (!shadowed) {
-    if (priv->last_focus) {
-      GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (self));
-
-      if (root)
-        gtk_root_set_focus (root, priv->last_focus);
-    }
+    if (priv->last_focus)
+      gtk_widget_grab_focus (priv->last_focus);
 
     g_clear_weak_pointer (&priv->last_focus);
   }
