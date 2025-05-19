@@ -350,7 +350,7 @@ adw_animation_class_init (AdwAnimationClass *klass)
   klass->calculate_value = adw_animation_calculate_value;
 
   /**
-   * AdwAnimation:widget: (attributes org.gtk.Property.get=adw_animation_get_widget)
+   * AdwAnimation:widget:
    *
    * The animation widget.
    *
@@ -367,7 +367,7 @@ adw_animation_class_init (AdwAnimationClass *klass)
                          G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwAnimation:target: (attributes org.gtk.Property.get=adw_animation_get_target org.gtk.Property.set=adw_animation_set_target)
+   * AdwAnimation:target:
    *
    * The target to animate.
    */
@@ -377,7 +377,7 @@ adw_animation_class_init (AdwAnimationClass *klass)
                          G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwAnimation:value: (attributes org.gtk.Property.get=adw_animation_get_value)
+   * AdwAnimation:value:
    *
    * The current value of the animation.
    */
@@ -389,7 +389,7 @@ adw_animation_class_init (AdwAnimationClass *klass)
                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwAnimation:state: (attributes org.gtk.Property.get=adw_animation_get_state)
+   * AdwAnimation:state:
    *
    * The animation state.
    *
@@ -403,7 +403,7 @@ adw_animation_class_init (AdwAnimationClass *klass)
                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwAnimation:follow-enable-animations-setting: (attributes org.gtk.Property.get=adw_animation_get_follow_enable_animations_setting org.gtk.Property.set=adw_animation_set_follow_enable_animations_setting)
+   * AdwAnimation:follow-enable-animations-setting:
    *
    * Whether to skip the animation when animations are globally disabled.
    *
@@ -454,7 +454,7 @@ adw_animation_init (AdwAnimation *self)
 }
 
 /**
- * adw_animation_get_widget: (attributes org.gtk.Method.get_property=widget)
+ * adw_animation_get_widget:
  * @self: an animation
  *
  * Gets the widget @self was created for.
@@ -481,7 +481,7 @@ adw_animation_get_widget (AdwAnimation *self)
 }
 
 /**
- * adw_animation_get_target: (attributes org.gtk.Method.get_property=target)
+ * adw_animation_get_target:
  * @self: an animation
  *
  * Gets the target @self animates.
@@ -501,7 +501,7 @@ adw_animation_get_target (AdwAnimation *self)
 }
 
 /**
- * adw_animation_set_target: (attributes org.gtk.Method.set_property=target)
+ * adw_animation_set_target:
  * @self: an animation
  * @target: an animation target
  *
@@ -527,7 +527,7 @@ adw_animation_set_target (AdwAnimation       *self,
 }
 
 /**
- * adw_animation_get_value: (attributes org.gtk.Method.get_property=value)
+ * adw_animation_get_value:
  * @self: an animation
  *
  * Gets the current value of @self.
@@ -547,7 +547,7 @@ adw_animation_get_value (AdwAnimation *self)
 }
 
 /**
- * adw_animation_get_state: (attributes org.gtk.Method.get_property=state)
+ * adw_animation_get_state:
  * @self: an animation
  *
  * Gets the current value of @self.
@@ -760,7 +760,7 @@ adw_animation_reset (AdwAnimation *self)
 }
 
 /**
- * adw_animation_get_follow_enable_animations_setting: (attributes org.gtk.Method.get_property=follow-enable-animations-setting)
+ * adw_animation_get_follow_enable_animations_setting:
  * @self: an animation
  *
  * Gets whether @self should be skipped when animations are globally disabled.
@@ -782,7 +782,7 @@ adw_animation_get_follow_enable_animations_setting (AdwAnimation *self)
 }
 
 /**
- * adw_animation_set_follow_enable_animations_setting: (attributes org.gtk.Method.set_property=follow-enable-animations-setting)
+ * adw_animation_set_follow_enable_animations_setting:
  * @self: an animation
  * @setting: whether to follow the global setting
  *

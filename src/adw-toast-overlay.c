@@ -5,6 +5,7 @@
  */
 
 #include "config.h"
+#include <glib/gi18n.h>
 
 #include "adw-toast-overlay.h"
 
@@ -35,6 +36,9 @@
  * main child, on top of which it can display a [class@Toast], overlaid.
  * Toasts can be shown with [method@ToastOverlay.add_toast].
  *
+ * Use [method@ToastOverlay.dismiss_all] to dismiss all toasts at once, or
+ * [method@Toast.dismiss] to dismiss a single toast.
+ *
  * See [class@Toast] for details.
  *
  * ## CSS nodes
@@ -62,7 +66,7 @@
  *
  * ## Accessibility
  *
- * `AdwToastOverlay` uses the `GTK_ACCESSIBLE_ROLE_TAB_GROUP` role.
+ * `AdwToastOverlay` uses the [enum@Gtk.AccessibleRole.GROUP] role.
  */
 
 typedef struct {
@@ -190,6 +194,8 @@ hide_current_toast (AdwToastOverlay *self)
   info->hide_animation =
     adw_timed_animation_new (GTK_WIDGET (self), 1, 0, HIDE_DURATION, target);
 
+  adw_timed_animation_set_easing (ADW_TIMED_ANIMATION (info->hide_animation), ADW_EASE);
+
   g_signal_connect_swapped (info->hide_animation, "done",
                             G_CALLBACK (hide_done_cb), info);
 
@@ -240,6 +246,8 @@ show_toast (AdwToastOverlay *self,
             ToastInfo       *info)
 {
   AdwAnimationTarget *target;
+  const char *title, *button_label;
+  char *announcement;
 
   g_assert (!info->widget);
 
@@ -256,10 +264,33 @@ show_toast (AdwToastOverlay *self,
                              self->hiding_toasts ? REPLACE_DURATION : SHOW_DURATION,
                              target);
 
+  adw_timed_animation_set_easing (ADW_TIMED_ANIMATION (info->show_animation), ADW_EASE);
+
   info->shown_id = g_signal_connect_swapped (info->show_animation, "done",
                                              G_CALLBACK (show_done_cb), info);
 
   adw_animation_play (info->show_animation);
+
+  title = adw_toast_get_title (info->toast);
+  button_label = adw_toast_get_button_label (info->toast);
+
+  if (title && button_label) {
+    announcement = g_strdup_printf (_("A toast appeared: %s, has a button: %s"),
+                                    title, button_label);
+  } else if (title && !button_label) {
+    announcement = g_strdup_printf (_("A toast appeared: %s"), title);
+  } else if (!title && button_label) {
+    announcement = g_strdup_printf (_("A toast appeared, has a button: %s"),
+                                    button_label);
+  } else {
+    announcement = g_strdup (_("A toast appeared"));
+  }
+
+  gtk_accessible_announce (GTK_ACCESSIBLE (self),
+                           announcement,
+                           GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+
+  g_free (announcement);
 }
 
 static int
@@ -498,7 +529,7 @@ adw_toast_overlay_class_init (AdwToastOverlayClass *klass)
   widget_class->size_allocate = adw_toast_overlay_size_allocate;
 
   /**
-   * AdwToastOverlay:child: (attributes org.gtk.Property.get=adw_toast_overlay_get_child org.gtk.Property.set=adw_toast_overlay_set_child)
+   * AdwToastOverlay:child:
    *
    * The child widget.
    */
@@ -561,7 +592,7 @@ adw_toast_overlay_new (void)
 }
 
 /**
- * adw_toast_overlay_get_child: (attributes org.gtk.Method.get_property=child)
+ * adw_toast_overlay_get_child:
  * @self: a toast overlay
  *
  * Gets the child widget of @self.
@@ -577,7 +608,7 @@ adw_toast_overlay_get_child (AdwToastOverlay *self)
 }
 
 /**
- * adw_toast_overlay_set_child: (attributes org.gtk.Method.set_property=child)
+ * adw_toast_overlay_set_child:
  * @self: a toast overlay
  * @child: (nullable): the child widget
  *
@@ -590,11 +621,11 @@ adw_toast_overlay_set_child (AdwToastOverlay *self,
   g_return_if_fail (ADW_IS_TOAST_OVERLAY (self));
   g_return_if_fail (child == NULL || GTK_IS_WIDGET (child));
 
-  if (child)
-    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
-
   if (self->child == child)
     return;
+
+  if (child)
+    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
 
   if (self->child)
     gtk_widget_unparent (self->child);
@@ -687,4 +718,23 @@ adw_toast_overlay_add_toast (AdwToastOverlay *self,
   default:
     g_assert_not_reached ();
   }
+}
+
+/**
+ * adw_toast_overlay_dismiss_all:
+ * @self: a toast overlay
+ *
+ * Dismisses all displayed toasts.
+ *
+ * Use [method@Toast.dismiss] to dismiss a single toast.
+ *
+ * Since: 1.7
+ */
+void
+adw_toast_overlay_dismiss_all (AdwToastOverlay *self)
+{
+  g_return_if_fail (ADW_IS_TOAST_OVERLAY (self));
+
+  g_clear_pointer (&self->current_toast, dismiss_and_free_toast_info);
+  g_queue_clear_full (self->queue, (GDestroyNotify) dismiss_and_free_toast_info);
 }

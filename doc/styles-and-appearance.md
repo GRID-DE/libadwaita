@@ -73,7 +73,7 @@ All standard GTK and Libadwaita widgets automatically support both styles.
 Applications that use custom drawing or styles may need to ensure the UI
 remains legible in both appearances:
 
-* When possible, use [named colors](named-colors.html) instead of hardcoded
+* When possible, use [CSS variables](css-variables.html) instead of hardcoded
   colors. For custom drawing, use [method@Gtk.StyleContext.get_color] to get the
   current text color for your widget, or [method@Gtk.StyleContext.lookup_color]
   to look up other colors.
@@ -83,6 +83,54 @@ remains legible in both appearances:
 
 * [class@Application] allows loading additional styles for dark appearance via
   the `style-dark.css` resource.
+
+## Accent Color
+
+Libadwaita applications follow the system accent color by default. Applications
+with custom drawing or styles may need to ensure that they use the actual accent
+color instead of hardcoding blue:
+
+* Use [accent color variables](css-variables.html#accent-colors) and the
+  [`.accent`](style-classes.html#colors) style class in CSS.
+
+* Use [property@StyleManager:accent-color-rgba] to get the background accent
+  color programmatically.
+
+* Use [property@StyleManager:accent-color] and 
+  [func@AccentColor.to_standalone_rgba] to get the standalone accent color
+  programmatically.
+
+Applications can override the accent color using CSS, as follows:
+
+```css
+:root {
+  --accent-bg-color: var(--accent-green); /* Always use the green color */
+}
+```
+
+Accent can also be overridden for an individual widget. In this case
+`--accent-color` must be manually overridden as well:
+
+```css
+my-widget {
+  --accent-bg-color: var(--accent-purple); /* Always use the purple color */
+  --accent-color: oklab(from var(--accent-bg-color) var(--standalone-color-oklab));
+}
+```
+
+All of the default accent colors use white text as the foreground color. If the
+custom accent color is too bright, use a dark foreground color instead:
+
+```css
+:root {
+  --accent-bg-color: var(--yellow-3);
+  --accent-fg-color: rgb(0 0 0 / 80%);
+}
+```
+
+::: note
+    When accent color is overridden, [class@StyleManager] API will still return
+    the system color.
 
 ## High Contrast
 
@@ -96,11 +144,11 @@ All standard GTK and Libadwaita widgets automatically support the high contrast
 appearance. Applications that use custom drawing or styles may need to support
 it manually.
 
-* Use style classes such as [`.dim-label`](style-classes.html#dim-label) instead
+* Use style classes such as [`.dimmed`](style-classes.html#dimmed) instead
   of changing widget opacity manually.
 
-* Use the [<code>&#64;borders</code>](named-colors.html#helper-colors) color for
-  borders instead of hardcoded colors.
+* Use the [helper variables](css-variables.html#helpers) when possible, instead
+  of hardcoding colors and opacities.
 
 * The [property@StyleManager:high-contrast] property can be used to check the
   current appearance.
@@ -127,4 +175,4 @@ Styles are stacked on top of each other: when using dark appearance, both
 ## See Also
 
 - [Style Classes](style-classes.html)
-- [Named Colors](named-colors.html)
+- [CSS Variables](css-variables.html)

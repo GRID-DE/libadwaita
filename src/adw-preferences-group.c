@@ -28,6 +28,11 @@
  * title and a description. The title will be used by [class@PreferencesDialog]
  * to let the user look for a preference.
  *
+ * The [property@PreferencesGroup:separate-rows] property can be used to
+ * separate the rows within the group, same as when using the
+ * [`.boxed-list-separate`](style-classes.html#boxed-lists-cards) style class
+ * instead of `.boxed-list`.
+ *
  * ## AdwPreferencesGroup as GtkBuildable
  *
  * The `AdwPreferencesGroup` implementation of the [iface@Gtk.Buildable] interface
@@ -74,6 +79,7 @@ enum {
   PROP_TITLE,
   PROP_DESCRIPTION,
   PROP_HEADER_SUFFIX,
+  PROP_SEPARATE_ROWS,
   LAST_PROP,
 };
 
@@ -196,6 +202,9 @@ adw_preferences_group_get_property (GObject    *object,
   case PROP_HEADER_SUFFIX:
     g_value_set_object (value, adw_preferences_group_get_header_suffix (self));
     break;
+  case PROP_SEPARATE_ROWS:
+    g_value_set_boolean (value, adw_preferences_group_get_separate_rows (self));
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
   }
@@ -218,6 +227,9 @@ adw_preferences_group_set_property (GObject      *object,
     break;
   case PROP_HEADER_SUFFIX:
     adw_preferences_group_set_header_suffix (self, g_value_get_object (value));
+    break;
+  case PROP_SEPARATE_ROWS:
+    adw_preferences_group_set_separate_rows (self, g_value_get_boolean (value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -248,9 +260,10 @@ adw_preferences_group_class_init (AdwPreferencesGroupClass *klass)
   object_class->dispose = adw_preferences_group_dispose;
 
   widget_class->compute_expand = adw_widget_compute_expand;
+  widget_class->focus = adw_widget_focus_child;
 
   /**
-   * AdwPreferencesGroup:title: (attributes org.gtk.Property.get=adw_preferences_group_get_title org.gtk.Property.set=adw_preferences_group_set_title)
+   * AdwPreferencesGroup:title:
    *
    * The title for this group of preferences.
    */
@@ -260,7 +273,7 @@ adw_preferences_group_class_init (AdwPreferencesGroupClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwPreferencesGroup:description: (attributes org.gtk.Property.get=adw_preferences_group_get_description org.gtk.Property.set=adw_preferences_group_set_description)
+   * AdwPreferencesGroup:description:
    *
    * The description for this group of preferences.
    */
@@ -270,7 +283,7 @@ adw_preferences_group_class_init (AdwPreferencesGroupClass *klass)
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwPreferencesGroup:header-suffix: (attributes org.gtk.Property.get=adw_preferences_group_get_header_suffix org.gtk.Property.set=adw_preferences_group_set_header_suffix)
+   * AdwPreferencesGroup:header-suffix:
    *
    * The header suffix widget.
    *
@@ -285,6 +298,22 @@ adw_preferences_group_class_init (AdwPreferencesGroupClass *klass)
     g_param_spec_object ("header-suffix", NULL, NULL,
                          GTK_TYPE_WIDGET,
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+  /**
+   * AdwPreferencesGroup:separate-rows:
+   *
+   * Whether to separate rows.
+   *
+   * Equivalent to using the
+   * [`.boxed-list-separate`](style-classes.html#boxed-lists-cards) style class
+   * on a [class@Gtk.ListBox] instead of `.boxed-list`.
+   *
+   * Since: 1.6
+   */
+  props[PROP_SEPARATE_ROWS] =
+    g_param_spec_boolean ("separate-rows", NULL, NULL,
+                          FALSE,
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   g_object_class_install_properties (object_class, LAST_PROP, props);
 
@@ -414,7 +443,7 @@ adw_preferences_group_remove (AdwPreferencesGroup *self,
 }
 
 /**
- * adw_preferences_group_get_title: (attributes org.gtk.Method.get_property=title)
+ * adw_preferences_group_get_title:
  * @self: a preferences group
  *
  * Gets the title of @self.
@@ -434,7 +463,7 @@ adw_preferences_group_get_title (AdwPreferencesGroup *self)
 }
 
 /**
- * adw_preferences_group_set_title: (attributes org.gtk.Method.set_property=title)
+ * adw_preferences_group_set_title:
  * @self: a preferences group
  * @title: the title
  *
@@ -461,7 +490,7 @@ adw_preferences_group_set_title (AdwPreferencesGroup *self,
 }
 
 /**
- * adw_preferences_group_get_description: (attributes org.gtk.Method.get_property=description)
+ * adw_preferences_group_get_description:
  * @self: a preferences group
  *
  * Gets the description of @self.
@@ -481,7 +510,7 @@ adw_preferences_group_get_description (AdwPreferencesGroup *self)
 }
 
 /**
- * adw_preferences_group_set_description: (attributes org.gtk.Method.set_property=description)
+ * adw_preferences_group_set_description:
  * @self: a preferences group
  * @description: (nullable): the description
  *
@@ -509,7 +538,7 @@ adw_preferences_group_set_description (AdwPreferencesGroup *self,
 
 /**
  * adw_preferences_group_get_header_suffix:
- * @self: a `AdwPreferencesGroup`
+ * @self: a preferences group
  *
  * Gets the suffix for @self's header.
  *
@@ -531,7 +560,7 @@ adw_preferences_group_get_header_suffix (AdwPreferencesGroup *self)
 
 /**
  * adw_preferences_group_set_header_suffix:
- * @self: a `AdwPreferencesGroup`
+ * @self: a preferences group
  * @suffix: (nullable): the suffix to set
  *
  * Sets the suffix for @self's header.
@@ -551,13 +580,13 @@ adw_preferences_group_set_header_suffix (AdwPreferencesGroup *self,
   g_return_if_fail (ADW_IS_PREFERENCES_GROUP (self));
   g_return_if_fail (suffix == NULL || GTK_IS_WIDGET (suffix));
 
-  if (suffix)
-    g_return_if_fail (gtk_widget_get_parent (suffix) == NULL);
-
   priv = adw_preferences_group_get_instance_private (self);
 
   if (suffix == priv->header_suffix)
     return;
+
+  if (suffix)
+    g_return_if_fail (gtk_widget_get_parent (suffix) == NULL);
 
   if (priv->header_suffix)
     gtk_box_remove (priv->header_box, priv->header_suffix);
@@ -568,6 +597,69 @@ adw_preferences_group_set_header_suffix (AdwPreferencesGroup *self,
     gtk_box_append (priv->header_box, priv->header_suffix);
 
   update_header_visibility (self);
+
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_HEADER_SUFFIX]);
+}
+
+/**
+ * adw_preferences_group_get_separate_rows:
+ * @self: a preferences group
+ *
+ * Gets whether @self's rows are separated.
+ *
+ * Returns: whether rows are separated
+ *
+ * Since: 1.6
+ */
+gboolean
+adw_preferences_group_get_separate_rows (AdwPreferencesGroup *self)
+{
+  AdwPreferencesGroupPrivate *priv;
+
+  g_return_val_if_fail (ADW_IS_PREFERENCES_GROUP (self), FALSE);
+
+  priv = adw_preferences_group_get_instance_private (self);
+
+  return gtk_widget_has_css_class (GTK_WIDGET (priv->listbox), "boxed-list-separate");
+}
+
+/**
+ * adw_preferences_group_set_separate_rows:
+ * @self: a preferences group
+ * @separate_rows: whether to separate rows
+ *
+ * Sets whether @self's rows are separated.
+ *
+ * Equivalent to using the
+ * [`.boxed-list-separate`](style-classes.html#boxed-lists-cards) style class
+ * on a [class@Gtk.ListBox] instead of `.boxed-list`.
+ *
+ * Since: 1.6
+ */
+void
+adw_preferences_group_set_separate_rows (AdwPreferencesGroup *self,
+                                         gboolean             separate_rows)
+{
+  AdwPreferencesGroupPrivate *priv;
+
+  g_return_if_fail (ADW_IS_PREFERENCES_GROUP (self));
+
+  priv = adw_preferences_group_get_instance_private (self);
+
+  separate_rows = !!separate_rows;
+
+  if (separate_rows == adw_preferences_group_get_separate_rows (self))
+    return;
+
+  if (separate_rows) {
+    gtk_widget_add_css_class (GTK_WIDGET (priv->listbox), "boxed-list-separate");
+    gtk_widget_remove_css_class (GTK_WIDGET (priv->listbox), "boxed-list");
+  } else {
+    gtk_widget_add_css_class (GTK_WIDGET (priv->listbox), "boxed-list");
+    gtk_widget_remove_css_class (GTK_WIDGET (priv->listbox), "boxed-list-separate");
+  }
+
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_SEPARATE_ROWS]);
 }
 
 /**
@@ -597,3 +689,4 @@ adw_preferences_group_get_rows (AdwPreferencesGroup *self)
 
   return model;
 }
+

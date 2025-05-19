@@ -225,7 +225,7 @@ adw_application_class_init (AdwApplicationClass *klass)
   application_class->startup = adw_application_startup;
 
   /**
-   * AdwApplication:style-manager: (attributes org.gtk.Property.get=adw_application_get_style_manager)
+   * AdwApplication:style-manager:
    *
    * The style manager for this application.
    *
@@ -271,7 +271,7 @@ adw_application_new (const char        *application_id,
 }
 
 /**
- * adw_application_get_style_manager: (attributes org.gtk.Method.get_property=style-manager)
+ * adw_application_get_style_manager:
  * @self: an application
  *
  * Gets the style manager for @self.

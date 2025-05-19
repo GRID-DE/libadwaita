@@ -11,7 +11,7 @@ This guide only focuses on on Libhandy and Libadwaita, and is designed to be
 used together with the [GTK 3 to 4 migration guide](https://docs.gtk.org/gtk4/migrating-3to4.html).
 
 If you notice that some differences between Libhandy and Libadwaita are missing
-in this guide, [please report them](https://gitlab.gnome.org/GNOME/libadwaita/-/issues/new).
+in this guide, [please report them](https://gitlab.gnome.org/GNOME/libadwaita/-/issues/).
 
 # Preparation in Libhandy 1.4
 
@@ -386,9 +386,9 @@ The `hdy_ease_out_cubic()` function has been removed. Instead,
 ## Adapt to Stylesheet Changes
 
 If you were using
-[<code>&#64;theme_selected_bg_color</code>](named-colors.html#compatibility-colors)
+[<code>&#64;theme_selected_bg_color</code>](css-variables.html#compatibility-colors)
 as a text color, use
-[<code>&#64;accent_color</code>](named-colors.html#accent-colors) instead to
+[<code>&#64;accent_color</code>](css-variables.html#accent-colors) instead to
 make sure the text is readable. You can also use the
 [`.accent`](style-classes.html#colors) style class to apply the correct color.
 
@@ -443,9 +443,10 @@ The following buttons keep default appearance:
 * Buttons with other content;
 * Buttons within widgets containing the
   [`.linked`](style-classes.html#linked-controls) class;
-* Buttons with the [`.suggested-action`](style-classes.html#suggested-action),
-  [`.destructive-action`](style-classes.html#destructive-action) or
-  [`.opaque`](style-classes.html#opaque) style classes.
+* Buttons with the [`.suggested-action`](style-classes.html#suggested-action) or
+  [`.opaque`](style-classes.html#opaque) style classes;
+* Buttons with the [`.destructive-action`](style-classes.html#destructive-action)
+  style class;
 * Buttons with the [`.raised`](style-classes.html#raised) style class.
 
 It's important to avoid ambiguous layouts, for example text-only buttons with

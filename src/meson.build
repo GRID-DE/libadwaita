@@ -11,6 +11,7 @@ libadwaita_resources = gnome.compile_resources(
 )
 
 adw_public_enum_headers = [
+  'adw-accent-color.h',
   'adw-alert-dialog.h',
   'adw-animation.h',
   'adw-banner.h',
@@ -20,6 +21,7 @@ adw_public_enum_headers = [
   'adw-fold-threshold-policy.h',
   'adw-easing.h',
   'adw-header-bar.h',
+  'adw-inline-view-switcher.h',
   'adw-leaflet.h',
   'adw-length-unit.h',
   'adw-navigation-direction.h',
@@ -29,6 +31,7 @@ adw_public_enum_headers = [
   'adw-toast.h',
   'adw-toolbar-view.h',
   'adw-view-switcher.h',
+  'adw-wrap-layout.h',
 ]
 
 adw_private_enum_headers = [
@@ -98,6 +101,7 @@ libadwaita_private_sources += adw_marshalers
 src_headers = [
   'adw-about-dialog.h',
   'adw-about-window.h',
+  'adw-accent-color.h',
   'adw-action-row.h',
   'adw-alert-dialog.h',
   'adw-animation.h',
@@ -108,9 +112,11 @@ src_headers = [
   'adw-avatar.h',
   'adw-banner.h',
   'adw-bin.h',
+  'adw-bottom-sheet.h',
   'adw-breakpoint.h',
   'adw-breakpoint-bin.h',
   'adw-button-content.h',
+  'adw-button-row.h',
   'adw-carousel.h',
   'adw-carousel-indicator-dots.h',
   'adw-carousel-indicator-lines.h',
@@ -126,10 +132,14 @@ src_headers = [
   'adw-flap.h',
   'adw-fold-threshold-policy.h',
   'adw-header-bar.h',
+  'adw-inline-view-switcher.h',
+  'adw-layout.h',
+  'adw-layout-slot.h',
   'adw-leaflet.h',
   'adw-length-unit.h',
   'adw-main.h',
   'adw-message-dialog.h',
+  'adw-multi-layout-view.h',
   'adw-navigation-direction.h',
   'adw-navigation-split-view.h',
   'adw-navigation-view.h',
@@ -141,6 +151,8 @@ src_headers = [
   'adw-preferences-row.h',
   'adw-preferences-window.h',
   'adw-spin-row.h',
+  'adw-spinner.h',
+  'adw-spinner-paintable.h',
   'adw-split-button.h',
   'adw-spring-animation.h',
   'adw-spring-params.h',
@@ -157,6 +169,7 @@ src_headers = [
   'adw-timed-animation.h',
   'adw-toast.h',
   'adw-toast-overlay.h',
+  'adw-toggle-group.h',
   'adw-toolbar-view.h',
   'adw-view-stack.h',
   'adw-view-switcher.h',
@@ -164,6 +177,8 @@ src_headers = [
   'adw-view-switcher-title.h',
   'adw-window.h',
   'adw-window-title.h',
+  'adw-wrap-box.h',
+  'adw-wrap-layout.h',
 ]
 
 gen_public_types = find_program('gen-public-types.py', required: true)
@@ -178,6 +193,7 @@ libadwaita_init_public_types = custom_target('adw-public-types.c',
 src_sources = [
   'adw-about-dialog.c',
   'adw-about-window.c',
+  'adw-accent-color.c',
   'adw-action-row.c',
   'adw-alert-dialog.c',
   'adw-animation.c',
@@ -188,9 +204,11 @@ src_sources = [
   'adw-avatar.c',
   'adw-banner.c',
   'adw-bin.c',
+  'adw-bottom-sheet.c',
   'adw-breakpoint.c',
   'adw-breakpoint-bin.c',
   'adw-button-content.c',
+  'adw-button-row.c',
   'adw-carousel.c',
   'adw-carousel-indicator-dots.c',
   'adw-carousel-indicator-lines.c',
@@ -206,10 +224,14 @@ src_sources = [
   'adw-flap.c',
   'adw-fold-threshold-policy.c',
   'adw-header-bar.c',
+  'adw-inline-view-switcher.c',
+  'adw-layout.c',
+  'adw-layout-slot.c',
   'adw-leaflet.c',
   'adw-length-unit.c',
   'adw-main.c',
   'adw-message-dialog.c',
+  'adw-multi-layout-view.c',
   'adw-navigation-direction.c',
   'adw-navigation-split-view.c',
   'adw-navigation-view.c',
@@ -221,6 +243,8 @@ src_sources = [
   'adw-preferences-row.c',
   'adw-preferences-window.c',
   'adw-spin-row.c',
+  'adw-spinner.c',
+  'adw-spinner-paintable.c',
   'adw-split-button.c',
   'adw-spring-animation.c',
   'adw-spring-params.c',
@@ -237,6 +261,7 @@ src_sources = [
   'adw-timed-animation.c',
   'adw-toast.c',
   'adw-toast-overlay.c',
+  'adw-toggle-group.c',
   'adw-toolbar-view.c',
   'adw-version.c',
   'adw-view-stack.c',
@@ -245,13 +270,17 @@ src_sources = [
   'adw-view-switcher-title.c',
   'adw-window.c',
   'adw-window-title.c',
+  'adw-wrap-box.c',
+  'adw-wrap-layout.c',
 ]
 
 # Files that should not be introspected
 libadwaita_private_sources += files([
+  'adw-adaptive-preview.c',
   'adw-back-button.c',
   'adw-bidi.c',
   'adw-bottom-sheet.c',
+  'adw-color-utils.c',
   'adw-dialog-host.c',
   'adw-fading-label.c',
   'adw-floating-sheet.c',
@@ -263,6 +292,7 @@ libadwaita_private_sources += files([
   'adw-settings-impl.c',
   'adw-settings-impl-gsettings.c',
   'adw-settings-impl-legacy.c',
+  'adw-sheet-controls.c',
   'adw-shadow-helper.c',
   'adw-tab.c',
   'adw-tab-box.c',
@@ -278,8 +308,8 @@ libadwaita_public_sources += files(src_sources)
 
 install_headers(src_headers, subdir: libadwaita_header_subdir)
 
-glib_min_version = '>= 2.76.0'
-gtk_min_version = '>= 4.13.4'
+glib_min_version = '>= 2.80.0'
+gtk_min_version = '>= 4.17.5'
 
 gio_dep = dependency('gio-2.0', version: glib_min_version)
 gtk_dep = dependency('gtk4', version: gtk_min_version)
@@ -380,7 +410,6 @@ endif
 libadwaita = library(
   'adwaita-' + apiversion,
   libadwaita_sources,
-
               soversion: soversion,
                  c_args: libadwaita_c_args,
            dependencies: libadwaita_deps,
@@ -398,15 +427,40 @@ libadwaita_dep = declare_dependency(
   include_directories: include_directories('.'),
 )
 
+if get_option('tests')
+  libadwaita_internal = static_library(
+    'adwaita-' + apiversion + '-internal',
+    libadwaita_sources,
+
+                   c_args: libadwaita_c_args,
+             dependencies: libadwaita_deps,
+      include_directories: [ root_inc, src_inc ],
+                link_args: libadwaita_link_args,
+  )
+
+  libadwaita_internal_dep = declare_dependency(
+                sources: libadwaita_generated_headers,
+           dependencies: libadwaita_public_deps,
+              link_whole: libadwaita_internal,
+    include_directories: include_directories('.'),
+  )
+endif
+
 meson.override_dependency(package_api_name, libadwaita_dep)
 
 if introspection
 
+   gir_dep = dependency('gobject-introspection-1.0')
    libadwaita_gir_extra_args = [
-     '--c-include=adwaita.h',
      '--quiet',
      '-DADWAITA_COMPILATION',
    ]
+   if gir_dep.version().version_compare('>=1.83.2')
+     libadwaita_gir_extra_args += [
+       '--doc-format=gi-docgen',
+     ]
+   endif
+
 
    libadwaita_gir = gnome.generate_gir(libadwaita,
                  sources: libadwaita_generated_headers + libadwaita_public_headers + libadwaita_public_sources,
@@ -416,6 +470,7 @@ if introspection
            symbol_prefix: 'adw',
        identifier_prefix: 'Adw',
                link_with: libadwaita,
+                  header: 'adwaita.h',
                 includes: ['Gio-2.0', 'Gtk-4.0'],
                  install: true,
          install_dir_gir: girdir,

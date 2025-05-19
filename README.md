@@ -1,4 +1,4 @@
-This is the patched version of libAdwaita in Linux Mint 22.
+This is the patched version of libAdwaita which allows themes.
 
 It is based on libAdwaita 1.5 and adds theme support.
 
@@ -35,3 +35,48 @@ Mint-X and Mint-Y implement support for this library.
 
 You can find their stylesheets in `/usr/share/themes/Mint-X/libadwaita-1.0` and `/usr/share/themes/Mint-Y/libadwaita-1.0`, or on github at https://github.com/linuxmint/mint-themes/pull/503.
 
+Below is the libadwaita README
+------------------------------
+
+# Adwaita
+
+Building blocks for modern GNOME applications.
+
+## License
+
+Libadwaita is licensed under the LGPL-2.1+.
+
+## Building
+
+We use the Meson (and thereby Ninja) build system for libadwaita. The quickest
+way to get going is to do the following:
+
+```sh
+meson setup _build
+ninja -C _build
+ninja -C _build install
+```
+
+For build options see [meson_options.txt](./meson_options.txt). E.g. to enable documentation:
+
+```sh
+meson setup _build -Ddocumentation=true
+ninja -C _build
+```
+
+## Usage
+
+There's a C example:
+
+```sh
+_build/run _build/demo/adwaita-1-demo
+```
+
+## Documentation
+
+The documentation can be found online
+[here](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/).
+
+## Getting in Touch
+
+Matrix room: [#libadwaita:gnome.org](https://matrix.to/#/#libadwaita:gnome.org)´

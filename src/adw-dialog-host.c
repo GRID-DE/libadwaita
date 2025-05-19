@@ -204,15 +204,6 @@ dialog_remove_cb (AdwDialog     *dialog,
     gtk_widget_unparent (GTK_WIDGET (dialog));
 }
 
-static gboolean
-key_pressed_cb (AdwDialogHost *self)
-{
-  if (self->dialogs->len == 0)
-    return GDK_EVENT_PROPAGATE;
-
-  return GDK_EVENT_STOP;
-}
-
 static void
 adw_dialog_host_root (GtkWidget *widget)
 {
@@ -260,6 +251,14 @@ adw_dialog_host_unmap (GtkWidget *widget)
                             self->dialogs_closed_during_unmap->len);
 }
 
+static GtkSizeRequestMode
+adw_dialog_host_get_request_mode (GtkWidget *widget)
+{
+  AdwDialogHost *self = ADW_DIALOG_HOST (widget);
+
+  return gtk_widget_get_request_mode (self->bin);
+}
+
 static void
 adw_dialog_host_measure (GtkWidget      *widget,
                          GtkOrientation  orientation,
@@ -271,6 +270,10 @@ adw_dialog_host_measure (GtkWidget      *widget,
 {
   AdwDialogHost *self = ADW_DIALOG_HOST (widget);
 
+  /* Only measure the child, not any dialogs. In case a dialog is too
+   * large to fit the screen (e.g. on a phone), we'd rather clip the
+   * dialog than have the whole window request a large size and overflow.
+   */
   gtk_widget_measure (self->bin, orientation, for_size,
                       minimum, natural, minimum_baseline, natural_baseline);
 }
@@ -286,14 +289,10 @@ adw_dialog_host_size_allocate (GtkWidget *widget,
   for (child = gtk_widget_get_first_child (widget);
        child;
        child = gtk_widget_get_next_sibling (child)) {
-    GtkRequisition min;
+    GtkAllocation child_allocation = { 0, 0, width, height };
 
-    gtk_widget_get_preferred_size (child, &min, NULL);
-
-    width = MAX (width, min.width);
-    height = MAX (height, min.height);
-
-    gtk_widget_allocate (child, width, height, baseline, NULL);
+    adw_ensure_child_allocation_size (child, &child_allocation);
+    gtk_widget_size_allocate (child, &child_allocation, -1);
   }
 }
 
@@ -393,7 +392,7 @@ adw_dialog_host_class_init (AdwDialogHostClass *klass)
   widget_class->unmap = adw_dialog_host_unmap;
   widget_class->measure = adw_dialog_host_measure;
   widget_class->size_allocate = adw_dialog_host_size_allocate;
-  widget_class->get_request_mode = adw_widget_get_request_mode;
+  widget_class->get_request_mode = adw_dialog_host_get_request_mode;
   widget_class->compute_expand = adw_widget_compute_expand;
 
   props[PROP_CHILD] =
@@ -419,18 +418,12 @@ adw_dialog_host_class_init (AdwDialogHostClass *klass)
 static void
 adw_dialog_host_init (AdwDialogHost *self)
 {
-  GtkEventController *controller;
-
   self->dialogs = g_ptr_array_new ();
 
   self->dialogs_closed_during_unmap = g_ptr_array_new ();
 
   self->bin = adw_bin_new ();
   gtk_widget_set_parent (self->bin, GTK_WIDGET (self));
-
-  controller = gtk_event_controller_key_new ();
-  g_signal_connect_swapped (controller, "key-pressed", G_CALLBACK (key_pressed_cb), self);
-  gtk_widget_add_controller (GTK_WIDGET (self), controller);
 }
 
 static void
@@ -474,11 +467,11 @@ adw_dialog_host_set_child (AdwDialogHost *self,
   g_return_if_fail (ADW_IS_DIALOG_HOST (self));
   g_return_if_fail (child == NULL || GTK_IS_WIDGET (child));
 
-  if (child)
-    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
-
   if (adw_dialog_host_get_child (self) == child)
     return;
+
+  if (child)
+    g_return_if_fail (gtk_widget_get_parent (child) == NULL);
 
   adw_bin_set_child (ADW_BIN (self->bin), child);
 
@@ -544,6 +537,9 @@ adw_dialog_host_present_dialog (AdwDialogHost *self,
 
   if (self->dialogs->len == 0) {
     GtkWidget *focus = gtk_window_get_focus (GTK_WINDOW (root));
+
+    while (focus && !gtk_widget_get_mapped (focus))
+      focus = gtk_widget_get_parent (focus);
 
     if (focus && gtk_widget_is_ancestor (focus, self->bin))
       g_set_weak_pointer (&self->last_focus, focus);
@@ -623,3 +619,4 @@ adw_dialog_host_get_from_proxy (GtkWidget *widget)
 
   return NULL;
 }
+

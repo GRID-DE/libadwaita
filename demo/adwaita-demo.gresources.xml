@@ -23,6 +23,7 @@
     <file preprocess="xml-stripblanks">icons/scalable/actions/view-sidebar-end-symbolic-rtl.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-about-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-banner-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/widget-bottom-sheet-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-carousel-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-clamp-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-dialog-symbolic.svg</file>
@@ -32,6 +33,7 @@
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-split-views-symbolic-rtl.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-tab-view-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-toast-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/widget-toggle-group-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/widget-view-switcher-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/apps/org.gnome.Boxes.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/apps/org.example.Typeset.svg</file>
@@ -44,29 +46,35 @@
   </gresource>
   <gresource prefix="/org/gnome/Adwaita1/Demo/ui">
     <file preprocess="xml-stripblanks">pages/about/adw-demo-page-about.ui</file>
+    <file preprocess="xml-stripblanks">pages/alerts/adw-demo-page-alerts.ui</file>
     <file preprocess="xml-stripblanks">pages/animations/adw-demo-page-animations.ui</file>
     <file preprocess="xml-stripblanks">pages/avatar/adw-demo-page-avatar.ui</file>
     <file preprocess="xml-stripblanks">pages/banners/adw-demo-page-banners.ui</file>
+    <file preprocess="xml-stripblanks">pages/bottom-sheets/adw-demo-page-bottom-sheets.ui</file>
     <file preprocess="xml-stripblanks">pages/buttons/adw-demo-page-buttons.ui</file>
     <file preprocess="xml-stripblanks">pages/carousel/adw-demo-page-carousel.ui</file>
     <file preprocess="xml-stripblanks">pages/clamp/adw-demo-page-clamp.ui</file>
-    <file preprocess="xml-stripblanks">pages/dialogs/adw-demo-page-dialogs.ui</file>
     <file preprocess="xml-stripblanks">pages/lists/adw-demo-page-lists.ui</file>
+    <file preprocess="xml-stripblanks">pages/multi-layout/adw-demo-page-multi-layout.ui</file>
+    <file preprocess="xml-stripblanks">pages/multi-layout/adw-multi-layout-demo-dialog.ui</file>
     <file preprocess="xml-stripblanks">pages/navigation-view/adw-demo-page-navigation-view.ui</file>
-    <file preprocess="xml-stripblanks">pages/navigation-view/adw-navigation-view-demo-window.ui</file>
+    <file preprocess="xml-stripblanks">pages/navigation-view/adw-navigation-view-demo-dialog.ui</file>
+    <file preprocess="xml-stripblanks">pages/spinner/adw-demo-page-spinner.ui</file>
     <file preprocess="xml-stripblanks">pages/split-views/adw-demo-page-split-views.ui</file>
-    <file preprocess="xml-stripblanks">pages/split-views/adw-navigation-split-view-demo-window.ui</file>
-    <file preprocess="xml-stripblanks">pages/split-views/adw-overlay-split-view-demo-window.ui</file>
+    <file preprocess="xml-stripblanks">pages/split-views/adw-navigation-split-view-demo-dialog.ui</file>
+    <file preprocess="xml-stripblanks">pages/split-views/adw-overlay-split-view-demo-dialog.ui</file>
     <file preprocess="xml-stripblanks">pages/styles/adw-demo-page-styles.ui</file>
-    <file preprocess="xml-stripblanks">pages/styles/adw-style-demo-window.ui</file>
+    <file preprocess="xml-stripblanks">pages/styles/adw-style-demo-dialog.ui</file>
     <file preprocess="xml-stripblanks">pages/tab-view/adw-demo-page-tab-view.ui</file>
     <file preprocess="xml-stripblanks">pages/tab-view/adw-tab-view-demo-page.ui</file>
     <file preprocess="xml-stripblanks">pages/tab-view/adw-tab-view-demo-window.ui</file>
     <file preprocess="xml-stripblanks">pages/toasts/adw-demo-page-toasts.ui</file>
+    <file preprocess="xml-stripblanks">pages/toggles/adw-demo-page-toggles.ui</file>
     <file preprocess="xml-stripblanks">pages/view-switcher/adw-demo-page-view-switcher.ui</file>
-    <file preprocess="xml-stripblanks">pages/view-switcher/adw-view-switcher-demo-window.ui</file>
+    <file preprocess="xml-stripblanks">pages/view-switcher/adw-view-switcher-demo-dialog.ui</file>
     <file preprocess="xml-stripblanks">pages/welcome/adw-demo-page-welcome.ui</file>
-    <file preprocess="xml-stripblanks">adw-demo-preferences-window.ui</file>
+    <file preprocess="xml-stripblanks">pages/wrap-box/adw-demo-page-wrap-box.ui</file>
+    <file preprocess="xml-stripblanks">adw-demo-preferences-dialog.ui</file>
     <file preprocess="xml-stripblanks">adw-demo-window.ui</file>
   </gresource>
 </gresources>

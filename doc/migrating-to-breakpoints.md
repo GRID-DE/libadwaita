@@ -421,8 +421,6 @@ Add a setter to your breakpoint, setting the
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 400sp</condition>
@@ -551,8 +549,6 @@ Add a setter to your breakpoint, setting the
 
 ```xml
 <object class="AdwWindow">
-  <property name="width-request">360</property>
-  <property name="height-request">200</property>
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 400sp</condition>
@@ -602,7 +598,12 @@ automatically when using `AdwOverlaySplitView`, so there's no need to bind their
 visibility to the [property@Flap:folded] property anymore.
 
 While `AdwOverlaySplitView` doesn't require using [class@NavigationPage], it can
-still be used to provide header bar titles insead of using [class@WindowTitle].
+still be used to provide header bar titles instead of using [class@WindowTitle].
+
+## Bottom Sheet
+
+A vertical `AdwFlap` can be used as a bottom sheet-like widget. It can be
+replaced with [class@BottomSheet].
 
 ## Fullscreen Header Bar
 
@@ -758,8 +759,8 @@ visible page from your breakpoint.
   <child>
     <object class="AdwBreakpoint">
       <condition>max-width: 550sp</condition>
-      <setter object="title_stack" property="visible-child">window_title</property>
-      <setter object="switcher_bar" property="reveal">True</property>
+      <setter object="title_stack" property="visible-child">window_title</setter>
+      <setter object="switcher_bar" property="reveal">True</setter>
     </object>
   </child>
   <property name="child">
@@ -864,7 +865,7 @@ use a single [class@Gtk.Box], and a breakpoint toggling the box's
 
 <object class="AdwBreakpoint">
   <condition>max-width: 400sp</condition>
-  <setter object="box" property="orientation">vertical</property>
+  <setter object="box" property="orientation">vertical</setter>
 </object>
 ```
 

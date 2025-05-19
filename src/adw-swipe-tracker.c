@@ -94,6 +94,7 @@ struct _AdwSwipeTracker
   GtkGesture *touch_gesture_capture;
 
   gboolean is_window_handle;
+  gboolean ignore_direction;
 };
 
 G_DEFINE_FINAL_TYPE_WITH_CODE (AdwSwipeTracker, adw_swipe_tracker, G_TYPE_OBJECT,
@@ -589,9 +590,9 @@ drag_capture_begin_cb (AdwSwipeTracker *self,
   }
 
   widget = gtk_widget_pick (GTK_WIDGET (self->swipeable),
-                          start_x,
-                          start_y,
-                          GTK_PICK_DEFAULT);
+                            start_x,
+                            start_y,
+                            GTK_PICK_DEFAULT);
 
   if (should_force_drag (self, widget)) {
     self->is_window_handle = TRUE;
@@ -616,9 +617,12 @@ drag_begin_cb (AdwSwipeTracker *self,
   }
 
   widget = gtk_widget_pick (GTK_WIDGET (self->swipeable),
-                          start_x,
-                          start_y,
-                          GTK_PICK_DEFAULT);
+                            start_x,
+                            start_y,
+                            GTK_PICK_DEFAULT);
+
+  if (should_force_drag (self, widget))
+    return;
 
   self->is_window_handle = FALSE;
 
@@ -663,11 +667,12 @@ drag_update_cb (AdwSwipeTracker *self,
   append_to_history (self, delta, time);
 
   if (self->state == ADW_SWIPE_TRACKER_STATE_NONE) {
-    if (is_vertical == is_offset_vertical)
-      gesture_prepare (self, offset > 0 ? ADW_NAVIGATION_DIRECTION_FORWARD : ADW_NAVIGATION_DIRECTION_BACK);
-    else
+    if (!self->ignore_direction && is_vertical != is_offset_vertical) {
       gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_DENIED);
-    return;
+      return;
+    }
+
+    gesture_prepare (self, offset > 0 ? ADW_NAVIGATION_DIRECTION_FORWARD : ADW_NAVIGATION_DIRECTION_BACK);
   }
 
   if (self->state == ADW_SWIPE_TRACKER_STATE_PENDING) {
@@ -699,10 +704,12 @@ drag_update_cb (AdwSwipeTracker *self,
       direction = offset > 0 ? ADW_NAVIGATION_DIRECTION_FORWARD : ADW_NAVIGATION_DIRECTION_BACK;
 
       if (!is_in_swipe_area (self, start_x, start_y, direction, TRUE) &&
-          !is_in_swipe_area (self, start_x + offset_x, start_y + offset_y, direction, TRUE))
+          !is_in_swipe_area (self, start_x + offset_x, start_y + offset_y, direction, TRUE)) {
+        gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_DENIED);
         return;
+      }
 
-      if (is_vertical != is_offset_vertical) {
+      if (!self->ignore_direction && is_vertical != is_offset_vertical) {
         gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_DENIED);
         return;
       }
@@ -766,6 +773,7 @@ drag_end_cb (AdwSwipeTracker *self,
   }
 
   gesture_end (self, distance, time, FALSE);
+  gtk_event_controller_reset (GTK_EVENT_CONTROLLER (self->touch_gesture));
 }
 
 static void
@@ -1177,7 +1185,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
   object_class->set_property = adw_swipe_tracker_set_property;
 
   /**
-   * AdwSwipeTracker:swipeable: (attributes org.gtk.Property.get=adw_swipe_tracker_get_swipeable)
+   * AdwSwipeTracker:swipeable:
    *
    * The widget the swipe tracker is attached to.
    */
@@ -1187,7 +1195,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
                          G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
 
   /**
-   * AdwSwipeTracker:enabled: (attributes org.gtk.Property.get=adw_swipe_tracker_get_enabled org.gtk.Property.set=adw_swipe_tracker_set_enabled)
+   * AdwSwipeTracker:enabled:
    *
    * Whether the swipe tracker is enabled.
    *
@@ -1200,7 +1208,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwSwipeTracker:reversed: (attributes org.gtk.Property.get=adw_swipe_tracker_get_reversed org.gtk.Property.set=adw_swipe_tracker_set_reversed)
+   * AdwSwipeTracker:reversed:
    *
    * Whether to reverse the swipe direction.
    *
@@ -1213,7 +1221,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwSwipeTracker:allow-mouse-drag: (attributes org.gtk.Property.get=adw_swipe_tracker_get_allow_mouse_drag org.gtk.Property.set=adw_swipe_tracker_set_allow_mouse_drag)
+   * AdwSwipeTracker:allow-mouse-drag:
    *
    * Whether to allow dragging with mouse pointer.
    */
@@ -1223,7 +1231,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwSwipeTracker:allow-long-swipes: (attributes org.gtk.Property.get=adw_swipe_tracker_get_allow_long_swipes org.gtk.Property.set=adw_swipe_tracker_set_allow_long_swipes)
+   * AdwSwipeTracker:allow-long-swipes:
    *
    * Whether to allow swiping for more than one snap point at a time.
    *
@@ -1236,7 +1244,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwSwipeTracker:lower-overshoot: (attributes org.gtk.Property.get=adw_swipe_tracker_get_lower_overshoot org.gtk.Property.set=adw_swipe_tracker_set_lower_overshoot)
+   * AdwSwipeTracker:lower-overshoot:
    *
    * Whether to allow swiping past the first available snap point.
    *
@@ -1248,7 +1256,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwSwipeTracker:upper-overshoot: (attributes org.gtk.Property.get=adw_swipe_tracker_get_upper_overshoot org.gtk.Property.set=adw_swipe_tracker_set_upper_overshoot)
+   * AdwSwipeTracker:upper-overshoot:
    *
    * Whether to allow swiping past the last available snap point.
    *
@@ -1260,7 +1268,7 @@ adw_swipe_tracker_class_init (AdwSwipeTrackerClass *klass)
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
-   * AdwSwipeTracker:allow-window-handle: (attributes org.gtk.Property.get=adw_swipe_tracker_get_allow_window_handle org.gtk.Property.set=adw_swipe_tracker_set_allow_window_handle)
+   * AdwSwipeTracker:allow-window-handle:
    *
    * Whether to allow touchscreen swiping from `GtkWindowHandle`.
    *
@@ -1400,7 +1408,7 @@ adw_swipe_tracker_new (AdwSwipeable *swipeable)
 }
 
 /**
- * adw_swipe_tracker_get_swipeable: (attributes org.gtk.Method.get_property=swipeable)
+ * adw_swipe_tracker_get_swipeable:
  * @self: a swipe tracker
  *
  * Get the widget @self is attached to.
@@ -1416,7 +1424,7 @@ adw_swipe_tracker_get_swipeable (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_get_enabled: (attributes org.gtk.Method.get_property=enabled)
+ * adw_swipe_tracker_get_enabled:
  * @self: a swipe tracker
  *
  * Gets whether @self is enabled.
@@ -1432,7 +1440,7 @@ adw_swipe_tracker_get_enabled (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_set_enabled: (attributes org.gtk.Method.set_property=enabled)
+ * adw_swipe_tracker_set_enabled:
  * @self: a swipe tracker
  * @enabled: whether @self is enabled
  *
@@ -1463,7 +1471,7 @@ adw_swipe_tracker_set_enabled (AdwSwipeTracker *self,
 }
 
 /**
- * adw_swipe_tracker_get_reversed: (attributes org.gtk.Method.get_property=reversed)
+ * adw_swipe_tracker_get_reversed:
  * @self: a swipe tracker
  *
  * Gets whether @self is reversing the swipe direction.
@@ -1479,7 +1487,7 @@ adw_swipe_tracker_get_reversed (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_set_reversed: (attributes org.gtk.Method.set_property=reversed)
+ * adw_swipe_tracker_set_reversed:
  * @self: a swipe tracker
  * @reversed: whether to reverse the swipe direction
  *
@@ -1504,7 +1512,7 @@ adw_swipe_tracker_set_reversed (AdwSwipeTracker *self,
 }
 
 /**
- * adw_swipe_tracker_get_allow_mouse_drag: (attributes org.gtk.Method.get_property=allow-mouse-drag)
+ * adw_swipe_tracker_get_allow_mouse_drag:
  * @self: a swipe tracker
  *
  * Gets whether @self can be dragged with mouse pointer.
@@ -1520,7 +1528,7 @@ adw_swipe_tracker_get_allow_mouse_drag (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_set_allow_mouse_drag: (attributes org.gtk.Method.set_property=allow-mouse-drag)
+ * adw_swipe_tracker_set_allow_mouse_drag:
  * @self: a swipe tracker
  * @allow_mouse_drag: whether to allow mouse dragging
  *
@@ -1545,7 +1553,7 @@ adw_swipe_tracker_set_allow_mouse_drag (AdwSwipeTracker *self,
 }
 
 /**
- * adw_swipe_tracker_get_allow_long_swipes: (attributes org.gtk.Method.get_property=allow-long-swipes)
+ * adw_swipe_tracker_get_allow_long_swipes:
  * @self: a swipe tracker
  *
  * Gets whether to allow swiping for more than one snap point at a time.
@@ -1561,7 +1569,7 @@ adw_swipe_tracker_get_allow_long_swipes (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_set_allow_long_swipes: (attributes org.gtk.Method.set_property=allow-long-swipes)
+ * adw_swipe_tracker_set_allow_long_swipes:
  * @self: a swipe tracker
  * @allow_long_swipes: whether to allow long swipes
  *
@@ -1587,7 +1595,7 @@ adw_swipe_tracker_set_allow_long_swipes (AdwSwipeTracker *self,
 }
 
 /**
- * adw_swipe_tracker_get_lower_overshoot: (attributes org.gtk.Method.get_property=lower-overshoot)
+ * adw_swipe_tracker_get_lower_overshoot:
  * @self: a swipe tracker
  *
  * Gets whether to allow swiping past the first available snap point.
@@ -1605,7 +1613,7 @@ adw_swipe_tracker_get_lower_overshoot (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_set_lower_overshoot: (attributes org.gtk.Method.set_property=lower-overshoot)
+ * adw_swipe_tracker_set_lower_overshoot:
  * @self: a swipe tracker
  * @overshoot: whether to allow swiping past the first available snap point
  *
@@ -1630,7 +1638,7 @@ adw_swipe_tracker_set_lower_overshoot (AdwSwipeTracker *self,
 }
 
 /**
- * adw_swipe_tracker_get_upper_overshoot: (attributes org.gtk.Method.get_property=upper-overshoot)
+ * adw_swipe_tracker_get_upper_overshoot:
  * @self: a swipe tracker
  *
  * Gets whether to allow swiping past the last available snap point.
@@ -1648,7 +1656,7 @@ adw_swipe_tracker_get_upper_overshoot (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_set_upper_overshoot: (attributes org.gtk.Method.set_property=upper-overshoot)
+ * adw_swipe_tracker_set_upper_overshoot:
  * @self: a swipe tracker
  * @overshoot: whether to allow swiping past the last available snap point
  *
@@ -1673,7 +1681,7 @@ adw_swipe_tracker_set_upper_overshoot (AdwSwipeTracker *self,
 }
 
 /**
- * adw_swipe_tracker_get_allow_window_handle: (attributes org.gtk.Method.get_property=allow-window-handle)
+ * adw_swipe_tracker_get_allow_window_handle:
  * @self: a swipe tracker
  *
  * Gets whether to allow touchscreen swiping from `GtkWindowHandle`.
@@ -1691,7 +1699,7 @@ adw_swipe_tracker_get_allow_window_handle (AdwSwipeTracker *self)
 }
 
 /**
- * adw_swipe_tracker_set_allow_window_handle: (attributes org.gtk.Method.set_property=allow-window-handle)
+ * adw_swipe_tracker_set_allow_window_handle:
  * @self: a swipe tracker
  * @allow_window_handle: whether to allow swiping from window handles
  *
@@ -1756,3 +1764,11 @@ adw_swipe_tracker_reset (AdwSwipeTracker *self)
     gtk_event_controller_reset (self->scroll_controller);
 }
 
+void
+adw_swipe_tracker_set_ignore_direction (AdwSwipeTracker *self,
+                                        gboolean         ignore_direction)
+{
+  g_return_if_fail (ADW_IS_SWIPE_TRACKER (self));
+
+  self->ignore_direction = TRUE;
+}

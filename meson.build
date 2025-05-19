@@ -1,7 +1,7 @@
 project('libadwaita', 'c',
-          version: '1.5.0',
+          version: '1.7.1',
           license: 'LGPL-2.1-or-later',
-    meson_version: '>= 0.59.0',
+    meson_version: '>= 0.63.0',
   default_options: [ 'warning_level=1', 'buildtype=debugoptimized', 'c_std=gnu11' ],
 )
 
@@ -29,7 +29,7 @@ package_api_name = '@0@-@1@'.format(meson.project_name(), apiversion)
 # to 0. When bumping the second version, set the third one to zero.
 #
 # A lot easier than libtool, right?
-libversion = '0.5.0'
+libversion = '0.7.1'
 # The so major version of the library
 soversion = 0
 
@@ -158,15 +158,11 @@ configure_file(
          output: 'run',
   configuration: run_data)
 
-if not meson.is_subproject()
-    meson.add_dist_script('build-aux'/ 'meson'/ 'dist-data.py')
-endif
-
 summary(
   {
     'Tests': get_option('tests'),
     'Examples': get_option('examples'),
-    'Documentation': get_option('gtk_doc'),
+    'Documentation': get_option('documentation'),
     'Introspection': introspection,
     'Vapi': get_option('vapi'),
   }, section: 'Options')
