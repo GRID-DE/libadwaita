@@ -82,6 +82,7 @@ adw_settings_impl_legacy_new (gboolean enable_color_scheme,
   }
 
   adw_settings_impl_set_features (ADW_SETTINGS_IMPL (self),
+                                  /* has_theme_name   */ FALSE,
                                   /* has_color_scheme */ FALSE,
                                   enable_high_contrast,
                                   /* has_accent_colors */ FALSE,
