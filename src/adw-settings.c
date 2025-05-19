@@ -94,7 +94,7 @@ set_high_contrast (AdwSettings *self,
 {
   if (high_contrast == self->high_contrast)
     return;
-  
+
   self->high_contrast = high_contrast;
 
   if (!self->override)
@@ -204,11 +204,6 @@ init_debug (AdwSettings *self,
 }
 
 static void
-register_impl (AdwSettings      *self,
-               AdwSettingsImpl  *impl,
-               gboolean         *found_theme_name,
-               gboolean         *found_color_scheme,
-               gboolean         *found_high_contrast)
 register_impl (AdwSettings     *self,
                AdwSettingsImpl *impl,
                gboolean        *found_theme_name,

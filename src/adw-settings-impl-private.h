@@ -104,10 +104,6 @@ G_DECLARE_FINAL_TYPE (AdwSettingsImplGSettings, adw_settings_impl_gsettings, ADW
 
 AdwSettingsImpl *adw_settings_impl_gsettings_new (gboolean enable_theme_name,
                                                   gboolean enable_color_scheme,
-                                                  gboolean enable_high_contrast) G_GNUC_WARN_UNUSED_RESULT;
-
-AdwSettingsImpl *adw_settings_impl_gsettings_new (gboolean enable_theme_name,
-                                                  gboolean enable_color_scheme,
                                                   gboolean enable_high_contrast,
                                                   gboolean enable_accent_colors,
                                                   gboolean enable_document_font_name,

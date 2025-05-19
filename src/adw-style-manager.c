@@ -445,7 +445,7 @@ update_stylesheet (AdwStyleManager       *self,
           gtk_css_provider_load_from_resource (self->colors_provider,
                                                "/org/gnome/Adwaita/styles/defaults-light.css");
       }
-    
+
       if (flags & UPDATE_ACCENT_COLOR && self->accent_provider) {
         char *accent_css = generate_accent_css (self);
         gtk_css_provider_load_from_string (self->accent_provider, accent_css);
@@ -461,7 +461,7 @@ update_stylesheet (AdwStyleManager       *self,
     self->animation_timeout_id =
       g_timeout_add_once (SWITCH_DURATION,
                           (GSourceOnceFunc) enable_animations_cb,
-                          self)
+                          self);
     }
 }
 
@@ -604,7 +604,7 @@ notify_high_contrast_cb (AdwStyleManager *self)
 static void
 notify_theme_name_cb (AdwStyleManager *self)
 {
-  update_stylesheet (self);
+  update_stylesheet (self, UPDATE_ALL);
 }
 
 static void
