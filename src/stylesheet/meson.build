@@ -73,17 +73,19 @@ if sassc.found()
     'defaults-dark',
   ]
 
-  foreach scss: scss_files
-    stylesheet_deps += custom_target('@0@.scss'.format(scss),
-      input: '@0@.scss'.format(scss),
-      output: '@0@.css'.format(scss),
-      command: [
-        sassc, sassc_opts, '@INPUT@', '@OUTPUT@',
-      ],
-      depend_files: scss_deps,
-    )
-  endforeach
-endif
+    foreach scss: scss_files
+      stylesheet_deps += custom_target('@0@.scss'.format(scss),
+        input: '@0@.scss'.format(scss),
+        output: '@0@.css'.format(scss),
+        command: [
+          sassc, sassc_opts, '@INPUT@', '@OUTPUT@',
+        ],
+        depend_files: scss_deps,
+        install: true,
+        install_dir: theme_dir
+      )
+    endforeach
+  endif
 
 libadwaita_stylesheet_resources = gnome.compile_resources(
   'adwaita-stylesheet-resources',
@@ -96,4 +98,9 @@ libadwaita_stylesheet_resources = gnome.compile_resources(
   ],
   dependencies: stylesheet_deps,
   c_name: 'adw_stylesheet',
+)
+
+install_subdir(
+  'assets',
+  install_dir: theme_dir
 )
