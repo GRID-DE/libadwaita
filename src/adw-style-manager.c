@@ -416,10 +416,20 @@ update_stylesheet (AdwStyleManager       *self,
     {
       debug_theme ("Using theme '%s' found in %s.", adw_settings_get_theme_name (self->settings), found_theme_path);
 
-      if (self->provider)
-        gtk_css_provider_load_from_path (self->provider, found_base_path);
-      if (self->colors_provider)
-        gtk_css_provider_load_from_path (self->colors_provider, found_colors_path);
+      if (flags & UPDATE_ACCENT_COLOR && self->accent_provider) {
+        char *accent_css = generate_accent_css (self);
+        gtk_css_provider_load_from_string (self->accent_provider, accent_css);
+        g_free (accent_css);
+      }
+      if (flags & UPDATE_FONTS && self->fonts_provider) {
+          char *fonts_css = generate_fonts_css (self);
+          gtk_css_provider_load_from_string (self->fonts_provider, fonts_css);
+          g_free (fonts_css);
+      }
+      if (flags & UPDATE_BASE && self->provider)
+            gtk_css_provider_load_from_path (self->provider, found_base_path);
+      if (flags & UPDATE_COLOR_SCHEME && self->colors_provider)
+            gtk_css_provider_load_from_path (self->colors_provider, found_colors_path);
 
       g_free (found_theme_path);
       g_free (found_base_path);
@@ -650,7 +660,7 @@ adw_style_manager_constructed (GObject *object)
       self->accent_provider = gtk_css_provider_new ();
       gtk_style_context_add_provider_for_display (self->display,
                                                   GTK_STYLE_PROVIDER (self->accent_provider),
-                                                  GTK_STYLE_PROVIDER_PRIORITY_THEME);
+                                                  GTK_STYLE_PROVIDER_PRIORITY_FALLBACK);
 
       self->fonts_provider = gtk_css_provider_new ();
       gtk_style_context_add_provider_for_display (self->display,
