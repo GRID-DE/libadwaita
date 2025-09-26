@@ -25,6 +25,8 @@ struct _AdwSettings
   AdwSettingsImpl *gsettings_impl;
   AdwSettingsImpl *legacy_impl;
 
+  gchar *theme_name; //F1_PATCH: adding theme
+
   AdwSystemColorScheme color_scheme;
   gboolean high_contrast;
   gboolean system_supports_color_schemes;
@@ -45,6 +47,7 @@ G_DEFINE_FINAL_TYPE (AdwSettings, adw_settings, G_TYPE_OBJECT);
 
 enum {
   PROP_0,
+  PROP_THEME_NAME, //F2_PATCH: adding theme
   PROP_SYSTEM_SUPPORTS_COLOR_SCHEMES,
   PROP_COLOR_SCHEME,
   PROP_HIGH_CONTRAST,
@@ -58,6 +61,21 @@ enum {
 static GParamSpec *props[LAST_PROP];
 
 static AdwSettings *default_instance;
+
+//F3_PATCH: adding theme
+static void
+set_theme_name (AdwSettings            *self,
+                const gchar            *theme_name)
+{
+  if (g_strcmp0 (self->theme_name, theme_name) == 0)
+    return;
+
+  self->theme_name = g_strdup (theme_name);
+
+  if (!self->override)
+    g_object_notify_by_pspec (G_OBJECT (self), props[PROP_THEME_NAME]);
+}
+//END_F3_PATCH
 
 static void
 set_color_scheme (AdwSettings          *self,
@@ -118,8 +136,10 @@ set_monospace_font_name (AdwSettings *self,
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_MONOSPACE_FONT_NAME]);
 }
 
+//// F4_PATCHES: 2
 static void
 init_debug (AdwSettings *self,
+            gboolean    *found_theme_name, // F4_PATCH_1
             gboolean    *found_color_scheme,
             gboolean    *found_high_contrast,
             gboolean    *found_accent_colors)
@@ -179,17 +199,37 @@ init_debug (AdwSettings *self,
                  "yellow, orange, red, pink, purple, slate)", env);
     }
   }
+  //F4_PATCH_2
+  env = g_getenv ("ADW_DEBUG_THEME_NAME");
+  if (env) {
+    *found_theme_name = TRUE;
+    self->theme_name = g_strdup (env);
+  }
+  //END_F4_PATCH_2
 }
 
+//F5_PATCHES
 static void
 register_impl (AdwSettings     *self,
                AdwSettingsImpl *impl,
+               gboolean        *found_theme_name,//F5_PATCH_1
                gboolean        *found_color_scheme,
                gboolean        *found_high_contrast,
                gboolean        *found_accent_colors,
                gboolean        *found_document_font_name,
                gboolean        *found_monospace_font_name)
 {
+  //F5_PATCH_2
+  if (adw_settings_impl_get_has_theme_name (impl)) {
+    *found_theme_name = TRUE;
+
+    set_theme_name (self, adw_settings_impl_get_theme_name (impl));
+
+    g_signal_connect_swapped (impl, "theme-name-changed",
+                              G_CALLBACK (set_theme_name), self);
+  }
+  //END_F5_PATCH_2
+
   if (adw_settings_impl_get_has_color_scheme (impl)) {
     *found_color_scheme = TRUE;
 
@@ -236,10 +276,12 @@ register_impl (AdwSettings     *self,
   }
 }
 
+//F6_PATCHES
 static void
 adw_settings_constructed (GObject *object)
 {
   AdwSettings *self = ADW_SETTINGS (object);
+  gboolean found_theme_name = FALSE;
   gboolean found_color_scheme = FALSE;
   gboolean found_high_contrast = FALSE;
   gboolean found_accent_colors = FALSE;
@@ -248,7 +290,7 @@ adw_settings_constructed (GObject *object)
 
   G_OBJECT_CLASS (adw_settings_parent_class)->constructed (object);
 
-  init_debug (self, &found_color_scheme, &found_high_contrast, &found_accent_colors);
+  init_debug (self, &found_theme_name/* F6_PATCH_1 */, &found_color_scheme, &found_high_contrast, &found_accent_colors);
 
 #ifdef __APPLE__
   self->platform_impl = adw_settings_impl_macos_new (!found_color_scheme,
@@ -263,28 +305,31 @@ adw_settings_constructed (GObject *object)
                                                      !found_document_font_name,
                                                      !found_monospace_font_name);
 #else
-  self->platform_impl = adw_settings_impl_portal_new (!found_color_scheme,
+  self->platform_impl = adw_settings_impl_portal_new (!found_theme_name,
+                                                      !found_color_scheme,
                                                       !found_high_contrast,
                                                       !found_accent_colors,
                                                       !found_document_font_name,
                                                       !found_monospace_font_name);
 #endif
 
-  register_impl (self, self->platform_impl, &found_color_scheme,
+  register_impl (self, self->platform_impl, &found_theme_name, &found_color_scheme,
                  &found_high_contrast, &found_accent_colors,
                  &found_document_font_name, &found_monospace_font_name);
 
-  if (!found_color_scheme ||
+  if (!found_theme_name ||
+      !found_color_scheme ||
       !found_high_contrast ||
       !found_accent_colors ||
       !found_document_font_name ||
       !found_monospace_font_name) {
-    self->gsettings_impl = adw_settings_impl_gsettings_new (!found_color_scheme,
+    self->gsettings_impl = adw_settings_impl_gsettings_new (!found_theme_name,
+                                                            !found_color_scheme,
                                                             !found_high_contrast,
                                                             !found_accent_colors,
                                                             !found_document_font_name,
                                                             !found_monospace_font_name);
-    register_impl (self, self->gsettings_impl, &found_color_scheme,
+    register_impl (self, self->gsettings_impl, &found_theme_name, &found_color_scheme,
                    &found_high_contrast, &found_accent_colors,
                    &found_document_font_name, &found_monospace_font_name);
   }
@@ -295,7 +340,7 @@ adw_settings_constructed (GObject *object)
                                                       !found_accent_colors,
                                                       !found_document_font_name,
                                                       !found_monospace_font_name);
-    register_impl (self, self->legacy_impl, &found_color_scheme,
+    register_impl (self, self->legacy_impl, &found_theme_name, &found_color_scheme,
                    &found_high_contrast, &found_accent_colors,
                    &found_document_font_name, &found_monospace_font_name);
   }
@@ -327,6 +372,10 @@ adw_settings_get_property (GObject    *object,
   AdwSettings *self = ADW_SETTINGS (object);
 
   switch (prop_id) {
+  case PROP_THEME_NAME:
+    g_value_set_string (value, adw_settings_get_theme_name (self));
+    break;
+
   case PROP_SYSTEM_SUPPORTS_COLOR_SCHEMES:
     g_value_set_boolean (value, adw_settings_get_system_supports_color_schemes (self));
     break;
@@ -368,6 +417,11 @@ adw_settings_class_init (AdwSettingsClass *klass)
   object_class->constructed = adw_settings_constructed;
   object_class->dispose = adw_settings_dispose;
   object_class->get_property = adw_settings_get_property;
+
+  props[PROP_THEME_NAME] =
+    g_param_spec_string ("theme-name", NULL, NULL,
+                         NULL,
+                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   props[PROP_SYSTEM_SUPPORTS_COLOR_SCHEMES] =
     g_param_spec_boolean ("system-supports-color-schemes", NULL, NULL,
@@ -429,8 +483,19 @@ adw_settings_get_theme_name (AdwSettings *self)
 {
   g_return_val_if_fail (ADW_IS_SETTINGS (self), NULL);
 
-  return self->theme_name;
-} //END_F1_PATCH
+  return self->theme_name; // TODO ADD THE THEME NAME CODE TO THIS FILE
+}
+
+gboolean
+adw_settings_get_theme_is_dark (AdwSettings *self)
+{
+  g_return_val_if_fail (ADW_IS_SETTINGS (self), FALSE);
+
+  g_autofree gchar *theme_utf8 = g_utf8_make_valid (self->theme_name, -1);
+  g_autofree gchar *lowered = g_utf8_strdown (theme_utf8, -1);
+  return g_str_has_suffix (lowered, "-dark") || !!g_strstr_len (lowered, -1, "-dark-");
+}
+//END_F1_PATCH
 
 gboolean
 adw_settings_get_system_supports_color_schemes (AdwSettings *self)
