@@ -136,7 +136,7 @@ find_theme_dir_each (const gchar  *dir,
       return FALSE;
     }
 
-  version_dir = g_strdup_printf ("libadwaita-%d.%d", ADW_MAJOR_VERSION, ADW_MINOR_VERSION);
+  version_dir = g_strdup_printf ("libadwaita"); // TODO Version grouping: version_dir = g_strdup_printf ("libadwaita-%d.%d", ADW_MAJOR_VERSION, ADW_MINOR_VERSION);
   main_path = g_build_filename (parent_dir, version_dir, main_file, NULL); // My Addition
   base_path = g_build_filename (parent_dir, version_dir, base_file, NULL);
   colors_path = g_build_filename (parent_dir, version_dir, color_file, NULL);
