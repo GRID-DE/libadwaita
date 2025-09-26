@@ -434,12 +434,14 @@ update_stylesheet (AdwStyleManager       *self,
     debug_theme("Using theme '%s' found in %s.", adw_settings_get_theme_name (self->settings), found_theme_path);
     if (self->provider)
     {
+      debug_theme("Loading the main/base provider.");
       gtk_css_provider_load_from_path (self->provider, found_base_path);
     }
     if (!base_is_main)
     {
       if (self->color_provider)
       {
+        debug_theme("Loading the color provider.");
         gtk_css_provider_load_from_path (self->color_provider, found_colors_path);
       }
     }
