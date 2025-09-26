@@ -110,7 +110,6 @@ find_theme_dir_each (const gchar  *dir,
   g_autofree gchar *version_dir = NULL;
 
   g_clear_pointer (found_theme_path, g_free);
-  g_clear_pointer (base_is_main, g_free);
   g_clear_pointer (found_base_path, g_free);
   g_clear_pointer (found_colors_path, g_free);
 
