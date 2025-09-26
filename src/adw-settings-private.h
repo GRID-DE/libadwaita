@@ -31,6 +31,11 @@ G_DECLARE_FINAL_TYPE (AdwSettings, adw_settings, ADW, SETTINGS, GObject)
 ADW_AVAILABLE_IN_ALL
 AdwSettings *adw_settings_get_default (void);
 
+//F1_PATCH
+ADW_AVAILABLE_IN_ALL
+const gchar *adw_settings_get_theme_name (AdwSettings *self);
+//END_F1_PATCH
+
 ADW_AVAILABLE_IN_ALL
 gboolean adw_settings_get_system_supports_color_schemes (AdwSettings *self);
 

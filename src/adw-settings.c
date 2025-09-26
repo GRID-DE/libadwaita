@@ -78,7 +78,7 @@ set_high_contrast (AdwSettings *self,
 {
   if (high_contrast == self->high_contrast)
     return;
-  
+
   self->high_contrast = high_contrast;
 
   if (!self->override)
@@ -422,6 +422,15 @@ adw_settings_get_default (void)
 
   return default_instance;
 }
+
+// F1_PATCH
+const gchar *
+adw_settings_get_theme_name (AdwSettings *self)
+{
+  g_return_val_if_fail (ADW_IS_SETTINGS (self), NULL);
+
+  return self->theme_name;
+} //END_F1_PATCH
 
 gboolean
 adw_settings_get_system_supports_color_schemes (AdwSettings *self)
