@@ -33,6 +33,15 @@ is_running_in_flatpak (void)
 }
 
 static void
+theme_name_changed_cb (AdwSettingsImplGSettings *self)
+{
+  gchar *theme_name = g_settings_get_string (self->interface_settings, "gtk-theme");
+
+  adw_settings_impl_set_theme_name (ADW_SETTINGS_IMPL (self), theme_name);
+  g_free (theme_name);
+}
+
+static void
 color_scheme_changed_cb (AdwSettingsImplGSettings *self)
 {
   AdwSystemColorScheme color_scheme =
@@ -104,7 +113,8 @@ adw_settings_impl_gsettings_init (AdwSettingsImplGSettings *self)
 }
 
 AdwSettingsImpl *
-adw_settings_impl_gsettings_new (gboolean enable_color_scheme,
+adw_settings_impl_gsettings_new (gboolean enable_theme_name,
+                                 gboolean enable_color_scheme,
                                  gboolean enable_high_contrast,
                                  gboolean enable_accent_colors,
                                  gboolean enable_document_font_name,
@@ -112,6 +122,7 @@ adw_settings_impl_gsettings_new (gboolean enable_color_scheme,
 {
   AdwSettingsImplGSettings *self = g_object_new (ADW_TYPE_SETTINGS_IMPL_GSETTINGS, NULL);
   GSettingsSchemaSource *source;
+  gboolean found_theme_name = FALSE;
   gboolean found_color_scheme = FALSE;
   gboolean found_high_contrast = FALSE;
   gboolean found_accent_colors = FALSE;
@@ -124,6 +135,24 @@ adw_settings_impl_gsettings_new (gboolean enable_color_scheme,
     return ADW_SETTINGS_IMPL (self);
 
   source = g_settings_schema_source_get_default ();
+
+  if (enable_theme_name) {
+      GSettingsSchema *schema =
+        g_settings_schema_source_lookup (source, "org.gnome.desktop.interface", TRUE);
+
+      if (schema && g_settings_schema_has_key (schema, "gtk-theme")) {
+        found_theme_name = TRUE;
+        self->interface_settings = g_settings_new ("org.gnome.desktop.interface");
+
+        theme_name_changed_cb (self);
+        g_signal_connect_swapped (self->interface_settings,
+                                  "changed::gtk-theme",
+                                  G_CALLBACK (theme_name_changed_cb),
+                                  self);
+      }
+
+      g_clear_pointer (&schema, g_settings_schema_unref);
+  }
 
   if (enable_color_scheme ||
       enable_accent_colors ||
@@ -209,6 +238,7 @@ adw_settings_impl_gsettings_new (gboolean enable_color_scheme,
   }
 
   adw_settings_impl_set_features (ADW_SETTINGS_IMPL (self),
+                                  found_theme_name,
                                   found_color_scheme,
                                   found_high_contrast,
                                   found_accent_colors,

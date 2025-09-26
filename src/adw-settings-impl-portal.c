@@ -25,6 +25,7 @@ struct _AdwSettingsImplPortal
 
   GDBusProxy *settings_portal;
 
+  gboolean found_theme_name;
   gboolean found_color_scheme;
 
   enum {
@@ -156,6 +157,17 @@ changed_cb (GDBusProxy            *proxy,
 
   g_variant_get (parameters, "(&s&sv)", &namespace, &name, &value);
 
+  if (!g_strcmp0 (namespace, "org.gnome.desktop.interface")) {
+      if (!g_strcmp0 (name, "gtk-theme") && self->found_theme_name) {
+        adw_settings_impl_set_theme_name (ADW_SETTINGS_IMPL (self),
+                                          g_variant_get_string (value, NULL));
+
+        g_variant_unref (value);
+
+        return;
+      }
+    }
+
   if (!g_strcmp0 (namespace, "org.freedesktop.appearance")) {
     if (!g_strcmp0 (name, "color-scheme") && self->found_color_scheme) {
       adw_settings_impl_set_color_scheme (ADW_SETTINGS_IMPL (self),
@@ -249,7 +261,8 @@ is_running_in_flatpak (void)
 }
 
 AdwSettingsImpl *
-adw_settings_impl_portal_new (gboolean enable_color_scheme,
+adw_settings_impl_portal_new (gboolean get_theme_name,
+                              gboolean enable_color_scheme,
                               gboolean enable_high_contrast,
                               gboolean enable_accent_colors,
                               gboolean enable_document_font_name,
@@ -276,6 +289,16 @@ adw_settings_impl_portal_new (gboolean enable_color_scheme,
     g_error_free (error);
 
     return ADW_SETTINGS_IMPL (self);
+  }
+
+  if (get_theme_name &&
+      read_setting (self, "org.gnome.desktop.interface",
+                    "gtk-theme", "s", &variant)) {
+
+    adw_settings_impl_set_theme_name (ADW_SETTINGS_IMPL (self),
+                                      g_variant_get_string (variant, NULL));
+
+    g_variant_unref (variant);
   }
 
   if (enable_color_scheme &&
@@ -344,13 +367,15 @@ adw_settings_impl_portal_new (gboolean enable_color_scheme,
   }
 
   adw_settings_impl_set_features (ADW_SETTINGS_IMPL (self),
+                                  self->found_theme_name,
                                   self->found_color_scheme,
                                   self->high_contrast_portal_state != HIGH_CONTRAST_STATE_NONE,
                                   self->found_accent_colors,
                                   self->found_document_font_name,
                                   self->found_monospace_font_name);
 
-  if (self->found_color_scheme ||
+  if (self->found_theme_name ||
+      self->found_color_scheme ||
       self->high_contrast_portal_state != HIGH_CONTRAST_STATE_NONE ||
       self->found_accent_colors ||
       self->found_document_font_name ||
