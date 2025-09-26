@@ -145,7 +145,7 @@ find_theme_dir_each (const gchar  *dir,
     {
       debug_theme ("Found theme directory '%s' in '%s'.", version_dir, parent_dir);
       *found_base_path = g_strdup (main_path);
-      *base_is_main = TRUE;
+      **base_is_main = TRUE;
       *found_theme_path = g_strdup (parent_dir);
       return TRUE;
     }
