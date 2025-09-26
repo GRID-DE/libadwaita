@@ -140,6 +140,7 @@ find_theme_dir_each (const gchar  *dir,
   main_path = g_build_filename (parent_dir, version_dir, main_file, NULL); // My Addition
   base_path = g_build_filename (parent_dir, version_dir, base_file, NULL);
   colors_path = g_build_filename (parent_dir, version_dir, color_file, NULL);
+  debug_theme ("Looking for files in: %s/%s", parent_dir, version_dir);
 
   if (g_file_test (main_path, G_FILE_TEST_EXISTS)) // My Addition
     {
