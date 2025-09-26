@@ -94,7 +94,7 @@ find_theme_dir_each (const gchar  *dir,
                     gboolean      hc,
                     gboolean      dark,
                     gchar       **found_theme_path,
-                    gboolean    **base_is_main,
+                    bool        *base_is_main,
                     gchar       **found_base_path,
                     gchar       **found_colors_path)
 {
@@ -113,7 +113,6 @@ find_theme_dir_each (const gchar  *dir,
   g_clear_pointer (found_base_path, g_free);
   g_clear_pointer (found_colors_path, g_free);
 
-  **base_is_main = FALSE;
 
   main_file = "main.css";
 
@@ -148,7 +147,7 @@ find_theme_dir_each (const gchar  *dir,
       debug_theme ("Found theme directory '%s' in '%s'.", version_dir, parent_dir);
       *found_base_path = g_strdup (main_path);
       debug_theme ("out 1");
-      **base_is_main = TRUE;
+      *base_is_main = true;
       debug_theme ("out 2");
       *found_theme_path = g_strdup (parent_dir);
       debug_theme ("out 3");
@@ -424,7 +423,7 @@ update_stylesheet (AdwStyleManager       *self,
 
   // F2_PATCH 1: Initialising needed vars // TODO: Make if main present override completly if not make defaults and base complementary to default adwaita
   gchar *found_theme_path = NULL;
-  gboolean *base_is_main = NULL; // My addition
+  bool base_is_main = false; // My addition
   gchar *found_base_path = NULL;
   gchar *found_colors_path = NULL;
   gboolean found_theme = find_theme_dir(adw_settings_get_theme_name (self->settings),
