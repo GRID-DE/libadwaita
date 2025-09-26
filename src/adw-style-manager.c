@@ -203,7 +203,7 @@ find_theme_dir (const gchar  *name,
                 gboolean      hc,
                 gboolean      dark,
                 gchar       **found_theme_path,
-                gboolean    **base_is_main,
+                bool    *base_is_main,
                 gchar       **found_base_path,
                 gchar       **found_colors_path)
 {
