@@ -32,6 +32,7 @@ gboolean adw_settings_impl_get_has_accent_colors       (AdwSettingsImpl *self);
 gboolean adw_settings_impl_get_has_document_font_name  (AdwSettingsImpl *self);
 gboolean adw_settings_impl_get_has_monospace_font_name (AdwSettingsImpl *self);
 void     adw_settings_impl_set_features                (AdwSettingsImpl *self,
+                                                        gboolean         has_theme_name,
                                                         gboolean         has_color_scheme,
                                                         gboolean         has_high_contrast,
                                                         gboolean         has_accent_colors,
@@ -45,6 +46,10 @@ void                 adw_settings_impl_set_color_scheme (AdwSettingsImpl      *s
 gboolean adw_settings_impl_get_high_contrast (AdwSettingsImpl *self);
 void     adw_settings_impl_set_high_contrast (AdwSettingsImpl *self,
                                               gboolean         high_contrast);
+
+void     adw_settings_impl_set_theme_name    (AdwSettingsImpl *self,
+                                              const gchar     *theme_name);
+const gchar *adw_settings_impl_get_theme_name (AdwSettingsImpl *self);
 
 AdwAccentColor adw_settings_impl_get_accent_color (AdwSettingsImpl *self);
 void           adw_settings_impl_set_accent_color (AdwSettingsImpl *self,
@@ -85,7 +90,9 @@ AdwSettingsImpl *adw_settings_impl_win32_new (gboolean enable_color_scheme,
 
 G_DECLARE_FINAL_TYPE (AdwSettingsImplPortal, adw_settings_impl_portal, ADW, SETTINGS_IMPL_PORTAL, AdwSettingsImpl)
 
-AdwSettingsImpl *adw_settings_impl_portal_new (gboolean enable_color_scheme,
+AdwSettingsImpl *adw_settings_impl_portal_new (
+                                               gboolean enable_theme_name,
+                                               gboolean enable_color_scheme,
                                                gboolean enable_high_contrast,
                                                gboolean enable_accent_colors,
                                                gboolean enable_document_font_name,
@@ -96,7 +103,8 @@ AdwSettingsImpl *adw_settings_impl_portal_new (gboolean enable_color_scheme,
 
 G_DECLARE_FINAL_TYPE (AdwSettingsImplGSettings, adw_settings_impl_gsettings, ADW, SETTINGS_IMPL_GSETTINGS, AdwSettingsImpl)
 
-AdwSettingsImpl *adw_settings_impl_gsettings_new (gboolean enable_color_scheme,
+AdwSettingsImpl *adw_settings_impl_gsettings_new (gboolean enable_theme_name,
+                                                  gboolean enable_color_scheme,
                                                   gboolean enable_high_contrast,
                                                   gboolean enable_accent_colors,
                                                   gboolean enable_document_font_name,
