@@ -430,6 +430,7 @@ update_stylesheet (AdwStyleManager       *self,
                                         &base_is_main,
                                         &found_base_path,
                                         &found_colors_path);
+  debug_theme("Out of find_theme_dir");
   if (found_theme)
   {
     debug_theme("Using theme '%s' found in %s.", adw_settings_get_theme_name (self->settings), found_theme_path);
