@@ -181,7 +181,7 @@ find_theme_dir_each (const gchar  *dir,
       if (dark)
         {
           debug_theme ("No dark variant found, trying light variant instead.");
-          return find_theme_dir_each (dir, subdir, name, hc, FALSE, found_theme_path, found_base_path, found_colors_path);
+          return find_theme_dir_each (dir, subdir, name, hc, FALSE, found_theme_path, base_is_main, found_base_path, found_colors_path);
         }
     }
 
