@@ -426,7 +426,7 @@ update_stylesheet (AdwStyleManager       *self,
                                         adw_settings_get_high_contrast (self->settings),
                                         self->dark,
                                         &found_theme_path,
-                                        &base_is_main
+                                        &base_is_main,
                                         &found_base_path,
                                         &found_colors_path);
   if (found_theme)
