@@ -58,6 +58,172 @@
 #define DEFAULT_DOCUMENT_FONT (DEFAULT_DOCUMENT_FONT_FAMILY " " DEFAULT_DOCUMENT_FONT_SIZE_STR)
 #define DEFAULT_MONOSPACE_FONT (DEFAULT_MONOSPACE_FONT_FAMILY " " DEFAULT_MONOSPACE_FONT_SIZE_STR)
 
+/*
+ * Functions for libadwaita-theamable
+ */
+static void
+debug_theme_valist (const gchar *format,
+                    va_list      args)
+{
+  static gsize init = 0;
+  static gboolean debug = FALSE;
+
+  if (g_once_init_enter (&init))
+    {
+      debug = !!g_getenv ("ADW_DEBUG_THEMES");
+      g_once_init_leave (&init, 1);
+    }
+
+  if (debug)
+    g_logv (G_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, format, args);
+}
+
+static void
+debug_theme (const gchar *format,
+            ...)
+{
+  va_list args;
+  va_start (args, format);
+  debug_theme_valist (format, args);
+  va_end (args);
+}
+static gboolean
+find_theme_dir_each (const gchar  *dir,
+                    const gchar  *subdir,
+                    const gchar  *name,
+                    gboolean      hc,
+                    gboolean      dark,
+                    gchar       **found_theme_path,
+                    gboolean    **base_is_main,
+                    gchar       **found_base_path,
+                    gchar       **found_colors_path)
+{
+  const gchar *main_file; // My Addition
+  const gchar *base_file;
+  const gchar *color_file;
+
+  g_autofree gchar *top_theme_dir = NULL;
+  g_autofree gchar *parent_dir = NULL;
+  g_autofree gchar *main_path = NULL; // My Addition
+  g_autofree gchar *base_path = NULL;
+  g_autofree gchar *colors_path = NULL;
+  g_autofree gchar *version_dir = NULL;
+
+  g_clear_pointer (found_theme_path, g_free);
+  g_clear_pointer (base_is_main, g_free);
+  g_clear_pointer (found_base_path, g_free);
+  g_clear_pointer (found_colors_path, g_free);
+
+  main_file = "main.css";
+
+  if (hc)
+    base_file = "base-hc.css";
+  else
+    base_file = "base.css";
+
+  if (dark)
+    color_file = "defaults-dark.css";
+  else
+    color_file = "defaults-light.css";
+
+  top_theme_dir = g_build_filename (dir, subdir, NULL);
+  parent_dir = g_build_filename (top_theme_dir, name, NULL);
+
+  debug_theme ("Looking for theme '%s' in '%s'", name, top_theme_dir);
+
+  if (!g_file_test (parent_dir, G_FILE_TEST_EXISTS))
+    {
+      return FALSE;
+    }
+
+  version_dir = g_strdup_printf ("libadwaita-%d.%d", ADW_MAJOR_VERSION, ADW_MINOR_VERSION);
+  main_path = g_build_filename (parent_dir, version_dir, base_file, NULL); // My Addition
+  base_path = g_build_filename (parent_dir, version_dir, base_file, NULL);
+  colors_path = g_build_filename (parent_dir, version_dir, color_file, NULL);
+
+  if (g_file_test (main_path, G_FILE_TEST_EXISTS)) // My Addition
+    {
+      debug_theme ("Found theme directory '%s' in '%s'.", version_dir, parent_dir);
+      *found_base_path = g_strdup (main_path);
+      *base_is_main = TRUE;
+      *found_theme_path = g_strdup (parent_dir);
+      return TRUE;
+    }
+  else
+    {
+      debug_theme ("No unified main.css found, checking pre-1.8.0 format.");
+    }
+
+  if (g_file_test (base_path, G_FILE_TEST_EXISTS))
+    {
+      debug_theme ("Found theme directory '%s' in '%s'.", version_dir, parent_dir);
+      *found_base_path = g_strdup (base_path);
+    }
+  else
+    {
+      // If the user wants high-contrast and the current theme doesn't support it,
+      // the default theme should be used.
+      if (hc)
+        {
+          debug_theme ("No high-contrast variant found, skipping this theme.");
+          return FALSE;
+        }
+    }
+
+  if (g_file_test (colors_path, G_FILE_TEST_EXISTS))
+    {
+      *found_colors_path = g_strdup (colors_path);
+    }
+  else
+    {
+      // If the user wants the dark variant and the current theme doesn't support it, check
+      // for its normal variant.
+      if (dark)
+        {
+          debug_theme ("No dark variant found, trying light variant instead.");
+          return find_theme_dir_each (dir, subdir, name, hc, FALSE, found_theme_path, found_base_path, found_colors_path);
+        }
+    }
+
+  if (*found_base_path && *found_colors_path)
+    {
+      *found_theme_path = g_strdup (parent_dir);
+      return TRUE;
+    }
+
+  return FALSE;
+}
+
+static gboolean
+find_theme_dir (const gchar  *name,
+                gboolean      hc,
+                gboolean      dark,
+                gchar       **found_theme_path,
+                gboolean    **base_is_main,
+                gchar       **found_base_path,
+                gchar       **found_colors_path)
+{
+  const char *const *dirs;
+  int i;
+  /* First look in the user's data directory */
+  if (find_theme_dir_each (g_get_user_data_dir (), "themes", name, hc, dark, found_theme_path, base_is_main, found_base_path, found_colors_path))
+    return TRUE;
+
+  /* Next look in the user's home directory */
+  if (find_theme_dir_each (g_get_home_dir (), ".themes", name, hc, dark, found_theme_path, base_is_main, found_base_path, found_colors_path))
+    return TRUE;
+
+  /* Look in system data directories */
+  dirs = g_get_system_data_dirs ();
+  for (i = 0; dirs[i]; i++)
+    {
+      if (find_theme_dir_each (dirs[i], "themes", name, hc, dark, found_theme_path, base_is_main, found_base_path, found_colors_path))
+        return TRUE;
+    }
+
+  return FALSE;
+}
+
 //F1_PATCHES: 1
 struct _AdwStyleManager
 {
@@ -1242,171 +1408,4 @@ adw_style_manager_get_monospace_font_name (AdwStyleManager *self)
     return DEFAULT_MONOSPACE_FONT;
 
   return self->monospace_font_name;
-}
-
-
-/*
- * Functions for libadwaita-theamable
- */
-static void
-debug_theme_valist (const gchar *format,
-                    va_list      args)
-{
-  static gsize init = 0;
-  static gboolean debug = FALSE;
-
-  if (g_once_init_enter (&init))
-    {
-      debug = !!g_getenv ("ADW_DEBUG_THEMES");
-      g_once_init_leave (&init, 1);
-    }
-
-  if (debug)
-    g_logv (G_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, format, args);
-}
-
-static void
-debug_theme (const gchar *format,
-            ...)
-{
-  va_list args;
-  va_start (args, format);
-  debug_theme_valist (format, args);
-  va_end (args);
-}
-static gboolean
-find_theme_dir_each (const gchar  *dir,
-                    const gchar  *subdir,
-                    const gchar  *name,
-                    gboolean      hc,
-                    gboolean      dark,
-                    gchar       **found_theme_path,
-                    gboolean    **base_is_main,
-                    gchar       **found_base_path,
-                    gchar       **found_colors_path)
-{
-  const gchar *main_file; // My Addition
-  const gchar *base_file;
-  const gchar *color_file;
-
-  g_autofree gchar *top_theme_dir = NULL;
-  g_autofree gchar *parent_dir = NULL;
-  g_autofree gchar *main_path = NULL; // My Addition
-  g_autofree gchar *base_path = NULL;
-  g_autofree gchar *colors_path = NULL;
-  g_autofree gchar *version_dir = NULL;
-
-  g_clear_pointer (found_theme_path, g_free);
-  g_clear_pointer (base_is_main, g_free);
-  g_clear_pointer (found_base_path, g_free);
-  g_clear_pointer (found_colors_path, g_free);
-
-  main_file = "main.css";
-
-  if (hc)
-    base_file = "base-hc.css";
-  else
-    base_file = "base.css";
-
-  if (dark)
-    color_file = "defaults-dark.css";
-  else
-    color_file = "defaults-light.css";
-
-  top_theme_dir = g_build_filename (dir, subdir, NULL);
-  parent_dir = g_build_filename (top_theme_dir, name, NULL);
-
-  debug_theme ("Looking for theme '%s' in '%s'", name, top_theme_dir);
-
-  if (!g_file_test (parent_dir, G_FILE_TEST_EXISTS))
-    {
-      return FALSE;
-    }
-
-  version_dir = g_strdup_printf ("libadwaita-%d.%d", ADW_MAJOR_VERSION, ADW_MINOR_VERSION);
-  main_path = g_build_filename (parent_dir, version_dir, base_file, NULL); // My Addition
-  base_path = g_build_filename (parent_dir, version_dir, base_file, NULL);
-  colors_path = g_build_filename (parent_dir, version_dir, color_file, NULL);
-
-  if (g_file_test (main_path, G_FILE_TEST_EXISTS)) // My Addition
-    {
-      debug_theme ("Found theme directory '%s' in '%s'.", version_dir, parent_dir);
-      *found_base_path = g_strdup (main_path);
-      *base_is_main = TRUE;
-      *found_theme_path = g_strdup (parent_dir);
-      return TRUE;
-    }
-  else
-    {
-      debug_theme ("No unified main.css found, checking pre-1.8.0 format.");
-    }
-
-  if (g_file_test (base_path, G_FILE_TEST_EXISTS))
-    {
-      debug_theme ("Found theme directory '%s' in '%s'.", version_dir, parent_dir);
-      *found_base_path = g_strdup (base_path);
-    }
-  else
-    {
-      // If the user wants high-contrast and the current theme doesn't support it,
-      // the default theme should be used.
-      if (hc)
-        {
-          debug_theme ("No high-contrast variant found, skipping this theme.");
-          return FALSE;
-        }
-    }
-
-  if (g_file_test (colors_path, G_FILE_TEST_EXISTS))
-    {
-      *found_colors_path = g_strdup (colors_path);
-    }
-  else
-    {
-      // If the user wants the dark variant and the current theme doesn't support it, check
-      // for its normal variant.
-      if (dark)
-        {
-          debug_theme ("No dark variant found, trying light variant instead.");
-          return find_theme_dir_each (dir, subdir, name, hc, FALSE, found_theme_path, found_base_path, found_colors_path);
-        }
-    }
-
-  if (*found_base_path && *found_colors_path)
-    {
-      *found_theme_path = g_strdup (parent_dir);
-      return TRUE;
-    }
-
-  return FALSE;
-}
-
-static gboolean
-find_theme_dir (const gchar  *name,
-                gboolean      hc,
-                gboolean      dark,
-                gchar       **found_theme_path,
-                gboolean    **base_is_main,
-                gchar       **found_base_path,
-                gchar       **found_colors_path)
-{
-  const char *const *dirs;
-  int i;
-  /* First look in the user's data directory */
-  if (find_theme_dir_each (g_get_user_data_dir (), "themes", name, hc, dark, found_theme_path, base_is_main, found_base_path, found_colors_path))
-    return TRUE;
-
-  /* Next look in the user's home directory */
-  if (find_theme_dir_each (g_get_home_dir (), ".themes", name, hc, dark, found_theme_path, base_is_main, found_base_path, found_colors_path))
-    return TRUE;
-
-  /* Look in system data directories */
-  dirs = g_get_system_data_dirs ();
-  for (i = 0; dirs[i]; i++)
-    {
-      if (find_theme_dir_each (dirs[i], "themes", name, hc, dark, found_theme_path, base_is_main, found_base_path, found_colors_path))
-        return TRUE;
-    }
-
-  return FALSE;
 }
