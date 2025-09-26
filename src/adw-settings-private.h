@@ -34,6 +34,8 @@ AdwSettings *adw_settings_get_default (void);
 //F1_PATCH
 ADW_AVAILABLE_IN_ALL
 const gchar *adw_settings_get_theme_name (AdwSettings *self);
+ADW_AVAILABLE_IN_ALL
+gboolean adw_settings_get_theme_is_dark (AdwSettings *self);
 //END_F1_PATCH
 
 ADW_AVAILABLE_IN_ALL

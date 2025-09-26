@@ -26,6 +26,7 @@ struct _AdwSettingsImplClass
   GObjectClass parent_class;
 };
 
+gboolean adw_settings_impl_get_has_theme_name          (AdwSettingsImpl *self);
 gboolean adw_settings_impl_get_has_color_scheme        (AdwSettingsImpl *self);
 gboolean adw_settings_impl_get_has_high_contrast       (AdwSettingsImpl *self);
 gboolean adw_settings_impl_get_has_accent_colors       (AdwSettingsImpl *self);
