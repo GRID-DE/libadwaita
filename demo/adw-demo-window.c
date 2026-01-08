@@ -30,6 +30,7 @@ struct _AdwDemoWindow
 
   AdwNavigationSplitView *split_view;
   AdwSidebar *sidebar;
+  AdwSidebarItem *active_item;
 };
 
 G_DEFINE_FINAL_TYPE (AdwDemoWindow, adw_demo_window, ADW_TYPE_APPLICATION_WINDOW)
@@ -41,6 +42,11 @@ update_content (AdwDemoWindow *self)
   GType type;
   GtkWidget *child;
   const char *title;
+
+  if (self->active_item == item)
+    return;
+
+  self->active_item = item;
 
   if (!item) {
     adw_navigation_split_view_set_content (self->split_view,
@@ -57,6 +63,12 @@ update_content (AdwDemoWindow *self)
 
   adw_navigation_split_view_set_content (self->split_view,
                                          adw_navigation_page_new (child, title));
+}
+
+static void
+search_activated_cb (AdwDemoWindow *self)
+{
+  gtk_widget_grab_focus (GTK_WIDGET (self->sidebar));
 }
 
 static void
@@ -89,6 +101,7 @@ adw_demo_window_class_init (AdwDemoWindowClass *klass)
   gtk_widget_class_set_template_from_resource (widget_class, "/org/gnome/Adwaita1/Demo/ui/adw-demo-window.ui");
   gtk_widget_class_bind_template_child (widget_class, AdwDemoWindow, split_view);
   gtk_widget_class_bind_template_child (widget_class, AdwDemoWindow, sidebar);
+  gtk_widget_class_bind_template_callback (widget_class, search_activated_cb);
   gtk_widget_class_bind_template_callback (widget_class, sidebar_activated_cb);
 
   gtk_widget_class_install_action (widget_class, "window.adaptive-preview", NULL, (GtkWidgetActionActivateFunc) adaptive_preview_cb);

@@ -70,8 +70,8 @@ static GSList *tab_view_list;
  *
  * ## Accessibility
  *
- * `AdwTabView` uses the `GTK_ACCESSIBLE_ROLE_TAB_PANEL` for the tab pages which
- * are the accessible parent objects of the child widgets.
+ * `AdwTabView` uses the [enum@Gtk.AccessibleRole.tab-panel] role for the tab
+ * pages which are the accessible parent objects of the child widgets.
  */
 
 /**
@@ -1423,6 +1423,15 @@ struct _AdwTabPages
   AdwTabView *view;
 };
 
+enum {
+  PAGES_PROP_0,
+  PAGES_PROP_ITEM_TYPE,
+  PAGES_PROP_N_ITEMS,
+  N_PAGES_PROPS,
+};
+
+static GParamSpec *pages_props[N_PAGES_PROPS];
+
 static GType
 adw_tab_pages_get_item_type (GListModel *model)
 {
@@ -1516,9 +1525,13 @@ adw_tab_pages_get_section (GtkSectionModel *model,
   guint start, end;
 
   if (G_UNLIKELY (!ADW_IS_TAB_VIEW (self->view))) {
-    start = end = 0;
+    start = 0;
+    end = G_MAXUINT;
   } else {
-    if (position < self->view->n_pinned_pages) {
+    if (position >= self->view->n_pages) {
+      start = self->view->n_pages;
+      end = G_MAXUINT;
+    } else if (position < self->view->n_pinned_pages) {
       start = 0;
       end = self->view->n_pinned_pages;
     } else {
@@ -1560,11 +1573,58 @@ adw_tab_pages_dispose (GObject *object)
 }
 
 static void
+adw_tab_pages_get_property (GObject    *object,
+                            guint       prop_id,
+                            GValue     *value,
+                            GParamSpec *pspec)
+{
+  AdwTabPages *self = ADW_TAB_PAGES (object);
+
+  switch (prop_id) {
+  case PAGES_PROP_ITEM_TYPE:
+    g_value_set_gtype (value, ADW_TYPE_TAB_PAGE);
+    break;
+  case PAGES_PROP_N_ITEMS:
+    g_value_set_uint (value, adw_tab_pages_get_n_items (G_LIST_MODEL (self)));
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+  }
+}
+
+static void
 adw_tab_pages_class_init (AdwTabPagesClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
   object_class->dispose = adw_tab_pages_dispose;
+  object_class->get_property = adw_tab_pages_get_property;
+
+  /**
+   * AdwTabPages:item-type:
+   *
+   * The type of the items. See [method@Gio.ListModel.get_item_type].
+   *
+   * Since: 1.9
+   */
+  pages_props[PAGES_PROP_ITEM_TYPE] =
+    g_param_spec_gtype ("item-type", NULL, NULL,
+                        ADW_TYPE_TAB_PAGE,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwTabPages:n-items:
+   *
+   * The number of items. See [method@Gio.ListModel.get_n_items].
+   *
+   * Since: 1.9
+   */
+  pages_props[PAGES_PROP_N_ITEMS] =
+    g_param_spec_uint ("n-items", NULL, NULL,
+                       0, G_MAXUINT, 0,
+                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties (object_class, N_PAGES_PROPS, pages_props);
 }
 
 static GtkSelectionModel *
@@ -1871,8 +1931,10 @@ detach_page (AdwTabView *self,
 
   g_signal_emit (self, signals[SIGNAL_PAGE_DETACHED], 0, page, pos);
 
-  if (!in_dispose && self->pages)
+  if (!in_dispose && self->pages) {
     g_list_model_items_changed (G_LIST_MODEL (self->pages), pos, 1, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->pages), pages_props[PAGES_PROP_N_ITEMS]);
+  }
 
   g_object_unref (page->bin);
   g_object_unref (page);
@@ -1891,8 +1953,10 @@ insert_page (AdwTabView *self,
   if (!self->selected_page)
     set_selected_page (self, page, FALSE);
 
-  if (self->pages)
+  if (self->pages) {
     g_list_model_items_changed (G_LIST_MODEL (self->pages), position, 0, 1);
+    g_object_notify_by_pspec (G_OBJECT (self->pages), pages_props[PAGES_PROP_N_ITEMS]);
+  }
 
   g_object_thaw_notify (G_OBJECT (self));
 }
@@ -2326,8 +2390,10 @@ adw_tab_view_dispose (GObject *object)
     self->unmap_extra_pages_cb = 0;
   }
 
-  if (self->pages)
+  if (self->pages) {
     g_list_model_items_changed (G_LIST_MODEL (self->pages), 0, self->n_pages, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->pages), pages_props[PAGES_PROP_N_ITEMS]);
+  }
 
   while (self->n_pages) {
     AdwTabPage *page = adw_tab_view_get_nth_page (self, 0);
@@ -2681,8 +2747,8 @@ adw_tab_view_class_init (AdwTabViewClass *klass)
    * A typical reason to connect to this signal is to show a confirmation dialog
    * for closing a tab.
    *
-   * The signal handler should return `GDK_EVENT_STOP` to stop propagation or
-   * `GDK_EVENT_CONTINUE` to invoke the default handler.
+   * The signal handler should return [const@Gdk.EVENT_STOP] to stop propagation
+   * or [const@Gdk.EVENT_PROPAGATE] to invoke the default handler.
    *
    * Returns: whether propagation should be stopped
    */
@@ -2951,6 +3017,7 @@ adw_tab_page_set_title (AdwTabPage *self,
                         const char *title)
 {
   g_return_if_fail (ADW_IS_TAB_PAGE (self));
+  g_return_if_fail (title != NULL);
 
   if (!g_set_str (&self->title, title ? title : ""))
     return;
@@ -4647,8 +4714,10 @@ adw_tab_view_attach_page (AdwTabView *self,
 
   attach_page (self, page, position);
 
-  if (self->pages)
+  if (self->pages) {
     g_list_model_items_changed (G_LIST_MODEL (self->pages), position, 0, 1);
+    g_object_notify_by_pspec (G_OBJECT (self->pages), pages_props[PAGES_PROP_N_ITEMS]);
+  }
 
   adw_tab_view_set_selected_page (self, page);
 

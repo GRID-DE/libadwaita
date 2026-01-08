@@ -19,6 +19,8 @@
 #include "adw-sidebar-section-private.h"
 #include "adw-widget-utils-private.h"
 
+#define TIMEOUT_ACTIVATE 500
+
 /**
  * AdwSidebarMode:
  * @ADW_SIDEBAR_MODE_SIDEBAR: The sidebar should be displayed as a sidebar
@@ -145,6 +147,40 @@
  * be shown when all items have been filtered out, or the sidebar has no items
  * otherwise.
  *
+ * ## Context Menu
+ *
+ * To create a context menu for the sidebar items, use the
+ * [property@Sidebar:menu-model] property to provide a menu model, and the
+ * [signal@Sidebar::setup-menu] signal to set up actions for the given item.
+ *
+ * To set or override the menu for just one section, use
+ * [property@SidebarSection:menu-model] instead.
+ *
+ * ## Drag-and-Drop
+ *
+ * `AdwSidebar` items can have a drop target for arbitrary content.
+ *
+ * Use [method@Sidebar.setup_drop_target] to set it up, specifying the
+ * supported content types and drag actions, then connect to
+ * [signal@Sidebar::drop] to handle drops.
+ *
+ * In some cases, it may be necessary to determine the used action based on the
+ * dragged content, or the hovered item.
+ *
+ * To determine it based on the sidebar item, connect to the
+ * [signal@Sidebar::drop-enter] signal and return the action from its handler.
+ *
+ * To determine it based on the content, set [property@Sidebar:drop-preload] to
+ * `TRUE`, then connect to [signal@Sidebar::drop-value-loaded] signal and return
+ * the action from its handler.
+ *
+ * In both cases the action will be passed as a parameter to the
+ * [signal@Sidebar::drop] signal.
+ *
+ * Regardless of whether a drop target was set up, dragging content over sidebar
+ * items activates them after a timeout. To disable this behavior for specific
+ * items, set [property@SidebarItem:drag-motion-activate] to `FALSE` on them.
+ *
  * ## `AdwSidebar` as `GtkBuildable`
  *
  * `AdwSidebar` allows adding sections as children.
@@ -243,6 +279,19 @@ struct _AdwSidebar
   gboolean in_dispose;
 
   int block_row_selected;
+
+  guint restore_scroll_idle_id;
+
+  GdkDragAction drop_actions;
+  GType *drop_types;
+  gsize n_drop_types;
+  gboolean drop_preload;
+  GdkDragAction preferred_action;
+
+  GMenuModel *menu_model;
+  GtkWidget *context_menu;
+  AdwSidebarItem *context_menu_item;
+  guint reset_menu_idle_id;
 };
 
 static void adw_sidebar_buildable_init (GtkBuildableIface *iface);
@@ -259,6 +308,8 @@ enum {
   PROP_SECTIONS,
   PROP_FILTER,
   PROP_PLACEHOLDER,
+  PROP_DROP_PRELOAD,
+  PROP_MENU_MODEL,
   LAST_PROP
 };
 
@@ -266,6 +317,10 @@ static GParamSpec *props[LAST_PROP];
 
 enum {
   SIGNAL_ACTIVATED,
+  SIGNAL_DROP,
+  SIGNAL_DROP_ENTER,
+  SIGNAL_DROP_VALUE_LOADED,
+  SIGNAL_SETUP_MENU,
   SIGNAL_LAST_SIGNAL,
 };
 
@@ -281,6 +336,15 @@ struct _AdwSidebarSections
 
   AdwSidebar *sidebar;
 };
+
+enum {
+  SECTIONS_PROP_0,
+  SECTIONS_PROP_ITEM_TYPE,
+  SECTIONS_PROP_N_ITEMS,
+  N_SECTIONS_PROPS,
+};
+
+static GParamSpec *sections_props[N_SECTIONS_PROPS];
 
 static void adw_sidebar_sections_list_model_init (GListModelInterface *iface);
 
@@ -298,11 +362,58 @@ adw_sidebar_sections_dispose (GObject *object)
 }
 
 static void
+adw_sidebar_sections_get_property (GObject    *object,
+                                   guint       prop_id,
+                                   GValue     *value,
+                                   GParamSpec *pspec)
+{
+  AdwSidebarSections *self = ADW_SIDEBAR_SECTIONS (object);
+
+  switch (prop_id) {
+  case SECTIONS_PROP_ITEM_TYPE:
+    g_value_set_gtype (value, ADW_TYPE_SIDEBAR_SECTION);
+    break;
+  case SECTIONS_PROP_N_ITEMS:
+    g_value_set_uint (value, g_list_model_get_n_items (G_LIST_MODEL (self)));
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+  }
+}
+
+static void
 adw_sidebar_sections_class_init (AdwSidebarSectionsClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
   object_class->dispose = adw_sidebar_sections_dispose;
+  object_class->get_property = adw_sidebar_sections_get_property;
+
+  /**
+   * AdwSidebarSections:item-type:
+   *
+   * The type of the items. See [method@Gio.ListModel.get_item_type].
+   *
+   * Since: 1.9
+   */
+  sections_props[SECTIONS_PROP_ITEM_TYPE] =
+    g_param_spec_gtype ("item-type", NULL, NULL,
+                        ADW_TYPE_SIDEBAR_ITEM,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwSidebarSections:n-items:
+   *
+   * The number of items. See [method@Gio.ListModel.get_n_items].
+   *
+   * Since: 1.9
+   */
+  sections_props[SECTIONS_PROP_N_ITEMS] =
+    g_param_spec_uint ("n-items", NULL, NULL,
+                       0, G_MAXUINT, 0,
+                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties (object_class, N_SECTIONS_PROPS, sections_props);
 }
 
 static void
@@ -321,6 +432,9 @@ adw_sidebar_sections_get_n_items (GListModel *model)
 {
   AdwSidebarSections *self = ADW_SIDEBAR_SECTIONS (model);
 
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR (self->sidebar)))
+    return 0;
+
   return self->sidebar->sections->len;
 }
 
@@ -332,6 +446,9 @@ adw_sidebar_sections_get_item (GListModel *model,
   AdwSidebarSection *section;
 
   if (position >= g_list_model_get_n_items (model))
+    return NULL;
+
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR (self->sidebar)))
     return NULL;
 
   section = g_ptr_array_index (self->sidebar->sections, position);
@@ -371,6 +488,15 @@ struct _AdwSidebarItems
   GtkFlattenListModel *flatten_model;
 };
 
+enum {
+  ITEMS_PROP_0,
+  ITEMS_PROP_ITEM_TYPE,
+  ITEMS_PROP_N_ITEMS,
+  N_ITEMS_PROPS,
+};
+
+static GParamSpec *items_props[N_ITEMS_PROPS];
+
 static void adw_sidebar_items_list_model_init (GListModelInterface *iface);
 static void adw_sidebar_items_section_model_init (GtkSectionModelInterface *iface);
 static void adw_sidebar_items_selection_model_init (GtkSelectionModelInterface *iface);
@@ -381,14 +507,60 @@ G_DEFINE_FINAL_TYPE_WITH_CODE (AdwSidebarItems, adw_sidebar_items, G_TYPE_OBJECT
                                G_IMPLEMENT_INTERFACE (GTK_TYPE_SELECTION_MODEL, adw_sidebar_items_selection_model_init))
 
 static void
+sidebar_weak_notify (gpointer  data,
+                     GObject  *object)
+{
+  AdwSidebarItems *self = data;
+
+  self->sidebar = NULL;
+  g_clear_object (&self->flatten_model);
+}
+
+static void
+items_items_changed_cb (AdwSidebarItems *self,
+                        guint            position,
+                        guint            removed,
+                        guint            added)
+{
+  g_list_model_items_changed (G_LIST_MODEL (self), position, removed, added);
+
+  if (removed != added)
+    g_object_notify_by_pspec (G_OBJECT (self), items_props[ITEMS_PROP_N_ITEMS]);
+}
+
+static void
 adw_sidebar_items_dispose (GObject *object)
 {
   AdwSidebarItems *self = ADW_SIDEBAR_ITEMS (object);
 
-  g_clear_weak_pointer (&self->sidebar);
+  if (self->sidebar) {
+    g_object_weak_unref (G_OBJECT (self->sidebar), sidebar_weak_notify, self);
+    self->sidebar = NULL;
+  }
+
   g_clear_object (&self->flatten_model);
 
   G_OBJECT_CLASS (adw_sidebar_items_parent_class)->dispose (object);
+}
+
+static void
+adw_sidebar_items_get_property (GObject    *object,
+                                guint       prop_id,
+                                GValue     *value,
+                                GParamSpec *pspec)
+{
+  AdwSidebarItems *self = ADW_SIDEBAR_ITEMS (object);
+
+  switch (prop_id) {
+  case ITEMS_PROP_ITEM_TYPE:
+    g_value_set_gtype (value, ADW_TYPE_SIDEBAR_ITEM);
+    break;
+  case ITEMS_PROP_N_ITEMS:
+    g_value_set_uint (value, g_list_model_get_n_items (G_LIST_MODEL (self)));
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+  }
 }
 
 static void
@@ -397,6 +569,33 @@ adw_sidebar_items_class_init (AdwSidebarItemsClass *klass)
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
   object_class->dispose = adw_sidebar_items_dispose;
+  object_class->get_property = adw_sidebar_items_get_property;
+
+  /**
+   * AdwSidebarItems:item-type:
+   *
+   * The type of the items. See [method@Gio.ListModel.get_item_type].
+   *
+   * Since: 1.9
+   */
+  items_props[ITEMS_PROP_ITEM_TYPE] =
+    g_param_spec_gtype ("item-type", NULL, NULL,
+                        ADW_TYPE_SIDEBAR_ITEM,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwSidebarItems:n-items:
+   *
+   * The number of items. See [method@Gio.ListModel.get_n_items].
+   *
+   * Since: 1.9
+   */
+  items_props[ITEMS_PROP_N_ITEMS] =
+    g_param_spec_uint ("n-items", NULL, NULL,
+                       0, G_MAXUINT, 0,
+                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties (object_class, N_ITEMS_PROPS, items_props);
 }
 
 static void
@@ -415,6 +614,9 @@ adw_sidebar_items_get_n_items (GListModel *model)
 {
   AdwSidebarItems *self = ADW_SIDEBAR_ITEMS (model);
 
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR (self->sidebar)))
+    return 0;
+
   return g_list_model_get_n_items (G_LIST_MODEL (self->flatten_model));
 }
 
@@ -423,6 +625,9 @@ adw_sidebar_items_get_item (GListModel *model,
                             guint       position)
 {
   AdwSidebarItems *self = ADW_SIDEBAR_ITEMS (model);
+
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR (self->sidebar)))
+    return NULL;
 
   return g_list_model_get_item (G_LIST_MODEL (self->flatten_model), position);
 }
@@ -443,6 +648,15 @@ adw_sidebar_items_get_section (GtkSectionModel *model,
 {
   AdwSidebarItems *self = ADW_SIDEBAR_ITEMS (model);
 
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR (self->sidebar))) {
+    if (out_start)
+      *out_start = 0;
+    if (out_end)
+      *out_end = G_MAXUINT;
+
+    return;
+  }
+
   gtk_section_model_get_section (GTK_SECTION_MODEL (self->flatten_model),
                                  position, out_start, out_end);
 }
@@ -459,6 +673,9 @@ adw_sidebar_items_is_selected (GtkSelectionModel *model,
 {
   AdwSidebarItems *self = ADW_SIDEBAR_ITEMS (model);
 
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR (self->sidebar)))
+    return FALSE;
+
   return position == self->sidebar->selected;
 }
 
@@ -468,6 +685,9 @@ adw_sidebar_items_select_item (GtkSelectionModel *model,
                                gboolean           exclusive)
 {
   AdwSidebarItems *self = ADW_SIDEBAR_ITEMS (model);
+
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR (self->sidebar)))
+    return FALSE;
 
   adw_sidebar_set_selected (self->sidebar, position);
 
@@ -499,7 +719,9 @@ adw_sidebar_items_new (AdwSidebar *sidebar)
   GListModel *sections;
 
   items = g_object_new (ADW_TYPE_SIDEBAR_ITEMS, NULL);
-  g_set_weak_pointer (&items->sidebar, sidebar);
+
+  items->sidebar = sidebar;
+  g_object_weak_ref (G_OBJECT (items->sidebar), sidebar_weak_notify, items);
 
   sections = adw_sidebar_get_sections (sidebar);
 
@@ -511,7 +733,7 @@ adw_sidebar_items_new (AdwSidebar *sidebar)
   items->flatten_model = gtk_flatten_list_model_new (G_LIST_MODEL (items->map_model));
 
   g_signal_connect_swapped (items->flatten_model, "items-changed",
-                            G_CALLBACK (g_list_model_items_changed), items);
+                            G_CALLBACK (items_items_changed_cb), items);
 
   return items;
 }
@@ -554,9 +776,11 @@ find_page_row (AdwSidebar     *self,
     return NULL;
     break;
   case GTK_FILTER_MATCH_ALL:
-    guint index = adw_sidebar_item_get_section_index (item);
+    {
+      guint index = adw_sidebar_item_get_section_index (item);
 
-    return adw_preferences_group_get_row (group, index);
+      return adw_preferences_group_get_row (group, index);
+    }
   default:
     g_assert_not_reached ();
   }
@@ -598,10 +822,12 @@ find_list_row (AdwSidebar     *self,
     return NULL;
     break;
   case GTK_FILTER_MATCH_ALL:
-    guint index = adw_sidebar_item_get_index (item);
-    GtkListBoxRow *row = gtk_list_box_get_row_at_index (GTK_LIST_BOX (self->listbox), index);
+    {
+      guint index = adw_sidebar_item_get_index (item);
+      GtkListBoxRow *row = gtk_list_box_get_row_at_index (GTK_LIST_BOX (self->listbox), index);
 
-    return GTK_WIDGET (row);
+      return GTK_WIDGET (row);
+    }
   default:
     g_assert_not_reached ();
   }
@@ -620,6 +846,428 @@ find_list_row (AdwSidebar     *self,
   }
 
   return NULL;
+}
+
+static GtkWidget *
+find_row (AdwSidebar     *self,
+          AdwSidebarItem *item)
+{
+  if (self->listbox)
+    return find_list_row (self, item);
+
+  if (self->page)
+    return find_page_row (self, item);
+
+  return NULL;
+}
+
+static void
+activate_timeout_cb (GtkWidget *row)
+{
+  g_object_steal_data (G_OBJECT (row), "activate-timer");
+
+  if (row) {
+    AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+    AdwSidebarSection *section = adw_sidebar_item_get_section (item);
+    AdwSidebar *self = adw_sidebar_section_get_sidebar (section);
+    guint index = adw_sidebar_item_get_index (item);
+
+    if (!adw_sidebar_item_get_drag_motion_activate (item))
+      return;
+
+    adw_sidebar_set_selected (self, index);
+    g_signal_emit (self, signals[SIGNAL_ACTIVATED], 0, index);
+  }
+}
+
+static void
+clear_timer (gpointer data)
+{
+  if (data)
+    g_source_remove (GPOINTER_TO_UINT (data));
+}
+
+static void
+drop_activate_enter_cb (AdwSidebar              *self,
+                        double                   x,
+                        double                   y,
+                        GtkDropControllerMotion *controller)
+{
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller));
+  AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+
+  if (!adw_sidebar_item_get_drag_motion_activate (item))
+    return;
+
+  if (adw_sidebar_item_get_index (item) != self->selected) {
+    guint activate_timer =
+      g_timeout_add_once (TIMEOUT_ACTIVATE, (GSourceOnceFunc) activate_timeout_cb, row);
+
+    g_object_set_data_full (G_OBJECT (row), "activate-timer",
+                            GUINT_TO_POINTER (activate_timer), clear_timer);
+  }
+}
+
+static void
+drop_activate_leave_cb (AdwSidebar              *self,
+                        GtkDropControllerMotion *controller)
+{
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller));
+  guint activate_timer =
+    GPOINTER_TO_UINT (g_object_steal_data (G_OBJECT (row), "activate-timer"));
+
+  if (activate_timer)
+    g_source_remove (activate_timer);
+}
+
+static GdkDragAction
+make_action_unique (GdkDragAction actions)
+{
+  if (actions & GDK_ACTION_COPY)
+    return GDK_ACTION_COPY;
+
+  if (actions & GDK_ACTION_MOVE)
+    return GDK_ACTION_MOVE;
+
+  if (actions & GDK_ACTION_LINK)
+    return GDK_ACTION_LINK;
+
+  return 0;
+}
+
+static gboolean
+drop_cb (AdwSidebar    *self,
+         const GValue  *value,
+         double         x,
+         double         y,
+         GtkDropTarget *target)
+{
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (target));
+  GdkDrop *drop = gtk_drop_target_get_current_drop (target);
+  GdkDragAction preferred_action = gdk_drop_get_actions (drop);
+  gboolean ret = GDK_EVENT_PROPAGATE;
+
+  AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+  guint index = adw_sidebar_item_get_index (item);
+
+  g_signal_emit (self, signals[SIGNAL_DROP], 0,
+                 index, value, preferred_action, &ret);
+
+  return ret;
+}
+
+static GdkDragAction
+drop_enter_cb (AdwSidebar    *self,
+               double         x,
+               double         y,
+               GtkDropTarget *target)
+{
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (target));
+  AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+  guint index = adw_sidebar_item_get_index (item);
+
+  g_signal_emit (self, signals[SIGNAL_DROP_ENTER], 0,
+                 index, &self->preferred_action);
+
+  self->preferred_action = make_action_unique (self->preferred_action);
+
+  return self->preferred_action;
+}
+
+static GdkDragAction
+drop_motion_cb (AdwSidebar *self)
+{
+  return self->preferred_action;
+}
+
+static void
+drop_notify_value_cb (AdwSidebar    *self,
+                      GParamSpec    *pspec,
+                      GtkDropTarget *target)
+{
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (target));
+  const GValue *value = gtk_drop_target_get_value (target);
+
+  AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+  guint index = adw_sidebar_item_get_index (item);
+
+  if (value) {
+    g_signal_emit (self, signals[SIGNAL_DROP_VALUE_LOADED], 0,
+                   index, value, &self->preferred_action);
+  }
+
+  self->preferred_action = make_action_unique (self->preferred_action);
+}
+
+static void
+setup_drop_target (AdwSidebar *self,
+                   GtkWidget  *row)
+{
+  GtkEventController *controller;
+  GtkDropTarget *target;
+
+  controller = gtk_drop_controller_motion_new ();
+
+  g_signal_connect_swapped (controller, "enter", G_CALLBACK (drop_activate_enter_cb), self);
+  g_signal_connect_swapped (controller, "leave", G_CALLBACK (drop_activate_leave_cb), self);
+
+  gtk_widget_add_controller (row, controller);
+
+  target = gtk_drop_target_new (G_TYPE_INVALID, GDK_ACTION_NONE);
+
+  g_signal_connect_swapped (target, "drop", G_CALLBACK (drop_cb), self);
+  g_signal_connect_swapped (target, "enter", G_CALLBACK (drop_enter_cb), self);
+  g_signal_connect_swapped (target, "motion", G_CALLBACK (drop_motion_cb), self);
+  g_signal_connect_swapped (target, "notify::value", G_CALLBACK (drop_notify_value_cb), self);
+
+  gtk_drop_target_set_actions (target, self->drop_actions);
+  gtk_drop_target_set_gtypes (target, self->drop_types, self->n_drop_types);
+  gtk_drop_target_set_preload (target, self->drop_preload);
+
+  gtk_widget_add_controller (row, GTK_EVENT_CONTROLLER (target));
+
+  g_object_set_data (G_OBJECT (row), "-adw-sidebar-drop-target", target);
+}
+
+static void
+setup_drop_target_cb (AdwSidebar     *self,
+                      AdwSidebarItem *item,
+                      GtkWidget      *row)
+{
+  GtkDropTarget *target = g_object_get_data (G_OBJECT (row), "-adw-sidebar-drop-target");
+
+  gtk_drop_target_set_actions (target, self->drop_actions);
+  gtk_drop_target_set_gtypes (target, self->drop_types, self->n_drop_types);
+}
+
+static void
+set_drop_preload_cb (AdwSidebar     *self,
+                     AdwSidebarItem *item,
+                     GtkWidget      *row)
+{
+  GtkDropTarget *target = g_object_get_data (G_OBJECT (row), "-adw-sidebar-drop-target");
+
+  gtk_drop_target_set_preload (target, self->drop_preload);
+}
+
+static GMenuModel *
+get_menu_model (AdwSidebar     *self,
+                AdwSidebarItem *item)
+{
+  AdwSidebarSection *section = adw_sidebar_item_get_section (item);
+  GMenuModel *model;
+
+  model = adw_sidebar_section_get_menu_model (section);
+  if (model)
+    return model;
+
+  return self->menu_model;
+}
+
+static void
+update_has_popup (AdwSidebar     *self,
+                  AdwSidebarItem *item,
+                  GtkWidget      *row)
+{
+  GMenuModel *model = get_menu_model (self, item);
+
+  if (model) {
+    gtk_accessible_update_property (GTK_ACCESSIBLE (row),
+                                    GTK_ACCESSIBLE_PROPERTY_HAS_POPUP, TRUE,
+                                    -1);
+  } else {
+    gtk_accessible_reset_property (GTK_ACCESSIBLE (row),
+                                   GTK_ACCESSIBLE_PROPERTY_HAS_POPUP);
+  }
+}
+
+static GdkDragAction
+drop_enter_default_cb (AdwSidebar *self,
+                       guint       index)
+{
+  return GDK_ACTION_ALL;
+}
+
+static void
+reset_setup_menu_cb (AdwSidebar *self)
+{
+  g_signal_emit (self, signals[SIGNAL_SETUP_MENU], 0, NULL);
+
+  g_clear_object (&self->context_menu_item);
+
+  self->reset_menu_idle_id = 0;
+}
+
+static void
+context_menu_notify_visible_cb (AdwSidebar *self)
+{
+  GtkWidget *row;
+
+  if (!self->context_menu || gtk_widget_get_visible (self->context_menu))
+    return;
+
+  g_clear_handle_id (&self->restore_scroll_idle_id, g_source_remove);
+
+  row = find_row (self, self->context_menu_item);
+  if (row)
+    gtk_widget_remove_css_class (row, "has-open-popup");
+
+  self->reset_menu_idle_id = g_idle_add_once ((GSourceOnceFunc) reset_setup_menu_cb, self);
+}
+
+static void
+open_context_menu (AdwSidebar     *self,
+                   AdwSidebarItem *item,
+                   GtkWidget      *row,
+                   double          x,
+                   double          y)
+{
+  GMenuModel *model = get_menu_model (self, item);
+  GdkRectangle rect;
+  graphene_point_t point, out_point;
+
+  if (!model)
+    return;
+
+  g_set_object (&self->context_menu_item, item);
+
+  g_signal_emit (self, signals[SIGNAL_SETUP_MENU], 0, item);
+
+  if (!self->context_menu) {
+    self->context_menu = gtk_popover_menu_new_from_model (model);
+    gtk_widget_set_parent (self->context_menu, GTK_WIDGET (self));
+    gtk_popover_set_position (GTK_POPOVER (self->context_menu), GTK_POS_BOTTOM);
+    gtk_popover_set_has_arrow (GTK_POPOVER (self->context_menu), FALSE);
+    gtk_widget_set_halign (self->context_menu, GTK_ALIGN_START);
+
+    g_signal_connect_object (self->context_menu, "notify::visible",
+                             G_CALLBACK (context_menu_notify_visible_cb), self,
+                             G_CONNECT_AFTER | G_CONNECT_SWAPPED);
+  } else {
+    gtk_popover_menu_set_menu_model (GTK_POPOVER_MENU (self->context_menu), model);
+  }
+
+  if (x > -0.5 && y > -0.5) {
+    graphene_point_init (&point, x, y);
+  } else {
+    if (gtk_widget_get_direction (GTK_WIDGET (self)) == GTK_TEXT_DIR_RTL)
+      graphene_point_init (&point, gtk_widget_get_width (row), gtk_widget_get_height (row));
+    else
+      graphene_point_init (&point, 0, gtk_widget_get_height (row));
+
+    g_assert (gtk_widget_compute_point (row, GTK_WIDGET (self), &point, &out_point));
+  }
+
+  g_assert (gtk_widget_compute_point (row, GTK_WIDGET (self), &point, &out_point));
+
+  rect.x = out_point.x;
+  rect.y = out_point.y;
+  rect.width = 0;
+  rect.height = 0;
+
+  gtk_popover_set_pointing_to (GTK_POPOVER (self->context_menu), &rect);
+
+  gtk_popover_popup (GTK_POPOVER (self->context_menu));
+
+  gtk_widget_add_css_class (row, "has-open-popup");
+}
+
+static void
+pressed_cb (AdwSidebar *self,
+            int         n_press,
+            double      x,
+            double      y,
+            GtkGesture *gesture)
+{
+  GdkEventSequence *current = gtk_gesture_single_get_current_sequence (GTK_GESTURE_SINGLE (gesture));
+  GdkEvent *event = gtk_gesture_get_last_event (gesture, current);
+
+   if (gdk_event_triggers_context_menu (event)) {
+    GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture));
+    AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+
+    open_context_menu (self, item, row, x, y);
+    gtk_gesture_set_state (gesture, GTK_EVENT_SEQUENCE_CLAIMED);
+    gtk_event_controller_reset (GTK_EVENT_CONTROLLER (gesture));
+
+    return;
+  }
+
+  gtk_gesture_set_state (gesture, GTK_EVENT_SEQUENCE_DENIED);
+}
+
+static void
+long_pressed_cb (AdwSidebar *self,
+                 double      x,
+                 double      y,
+                 GtkGesture *gesture)
+{
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture));
+  AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+
+  gtk_gesture_set_state (gesture, GTK_EVENT_SEQUENCE_CLAIMED);
+  open_context_menu (self, item, row, x, y);
+}
+
+static void
+setup_context_menu (AdwSidebar     *self,
+                    AdwSidebarItem *item,
+                    GtkWidget      *row)
+{
+  GtkEventController *controller;
+
+  controller = GTK_EVENT_CONTROLLER (gtk_gesture_click_new ());
+  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (controller), 0);
+  gtk_gesture_single_set_exclusive (GTK_GESTURE_SINGLE (controller), TRUE);
+  g_signal_connect_swapped (controller, "pressed", G_CALLBACK (pressed_cb), self);
+  gtk_widget_add_controller (row, controller);
+
+  controller = GTK_EVENT_CONTROLLER (gtk_gesture_long_press_new ());
+  gtk_gesture_long_press_set_delay_factor (GTK_GESTURE_LONG_PRESS (controller), 2);
+  gtk_gesture_single_set_exclusive (GTK_GESTURE_SINGLE (controller), TRUE);
+  gtk_gesture_single_set_touch_only (GTK_GESTURE_SINGLE (controller), TRUE);
+  g_signal_connect_swapped (controller, "pressed", G_CALLBACK (long_pressed_cb), self);
+  gtk_widget_add_controller (row, controller);
+
+  update_has_popup (self, item, row);
+}
+
+static void
+popup_menu_cb (GtkWidget  *widget,
+               const char *action_name,
+               GVariant   *parameter)
+{
+  AdwSidebar *self = ADW_SIDEBAR (widget);
+  AdwSidebarItem *item;
+  GtkWidget *row = NULL;
+
+  if (self->selected == GTK_INVALID_LIST_POSITION)
+    return;
+
+  if (self->page) {
+    // We don't update selection in page mode, so get the focused row instead
+    GtkRoot *root = gtk_widget_get_root (widget);
+
+    if (root)
+      row = gtk_root_get_focus (root);
+
+    if (row && !gtk_widget_is_ancestor (row, GTK_WIDGET (self)))
+      row = NULL;
+  } else {
+    AdwSidebarItem *selected = adw_sidebar_get_selected_item (self);
+
+    if (selected)
+      row = find_row (self, selected);
+  }
+
+  if (!row)
+    return;
+
+  item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+  if (!item)
+    return;
+
+  open_context_menu (self, item, row, -1, -1);
 }
 
 static void
@@ -671,10 +1319,23 @@ notify_suffix_cb (AdwSidebarItem *item,
   g_object_set_data (G_OBJECT (row), "-adw-sidebar-item-suffix", suffix);
 }
 
+static void
+section_menu_model_notify_cb (AdwSidebarSection *section,
+                     GParamSpec        *pspec,
+                     GtkWidget         *row)
+{
+  AdwSidebar *self = ADW_SIDEBAR (gtk_widget_get_ancestor (row, ADW_TYPE_SIDEBAR));
+  AdwSidebarItem *item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+
+  update_has_popup (self, item, row);
+}
+
 static GtkWidget *
-create_row (AdwSidebarItem *item)
+create_row (AdwSidebarItem *item,
+            AdwSidebar     *self)
 {
   GtkWidget *row, *box, *icon, *title_box, *title, *subtitle;
+  AdwSidebarSection *section;
 
   row = gtk_list_box_row_new ();
 
@@ -727,6 +1388,13 @@ create_row (AdwSidebarItem *item)
   g_signal_connect_object (item, "notify::suffix",
                            G_CALLBACK (notify_suffix_cb), row, 0);
   notify_suffix_cb (item, NULL, GTK_LIST_BOX_ROW (row));
+
+  setup_drop_target (self, row);
+  setup_context_menu (self, item, row);
+
+  section = adw_sidebar_item_get_section (item);
+  g_signal_connect_object (section, "notify::menu-model",
+                           G_CALLBACK (section_menu_model_notify_cb), row, 0);
 
   return row;
 }
@@ -909,6 +1577,7 @@ create_boxed_row (AdwSidebarItem *item,
                   AdwSidebar     *self)
 {
   GtkWidget *row, *icon, *arrow;
+  AdwSidebarSection *section;
 
   row = adw_action_row_new ();
 
@@ -949,7 +1618,14 @@ create_boxed_row (AdwSidebarItem *item,
 
   g_object_set_data (G_OBJECT (row), "-adw-sidebar-arrow", arrow);
 
+  setup_drop_target (self, row);
+  setup_context_menu (self, item, row);
+
   g_signal_connect_swapped (row, "activated", G_CALLBACK (boxed_row_activated_cb), self);
+
+  section = adw_sidebar_item_get_section (item);
+  g_signal_connect_object (section, "notify::menu-model",
+                           G_CALLBACK (section_menu_model_notify_cb), row, 0);
 
   return row;
 }
@@ -976,7 +1652,7 @@ has_items (GBinding     *binding,
            GValue       *to_value,
            gpointer      user_data)
 {
-  uint n_items = g_value_get_uint (from_value);
+  guint n_items = g_value_get_uint (from_value);
 
   g_value_set_boolean (to_value, n_items > 0);
 
@@ -1081,6 +1757,56 @@ scroll_to (GtkWidget *viewport,
   return TRUE;
 }
 
+typedef void (* ForeachRowFunc) (AdwSidebar     *self,
+                                 AdwSidebarItem *item,
+                                 GtkWidget      *row);
+
+static void
+foreach_row (AdwSidebar     *self,
+             ForeachRowFunc  callback)
+{
+  guint i = 0;
+
+  if (self->listbox) {
+    while (TRUE) {
+      GtkListBoxRow *row = gtk_list_box_get_row_at_index (GTK_LIST_BOX (self->listbox), i++);
+      AdwSidebarItem *item;
+
+      if (!row)
+        break;
+
+      item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+
+      callback (self, item, GTK_WIDGET (row));
+    }
+
+    return;
+  }
+
+  if (self->page) {
+    while (TRUE) {
+      AdwPreferencesGroup *group;
+      guint j = 0;
+
+      group = adw_preferences_page_get_group (ADW_PREFERENCES_PAGE (self->page), i++);
+      if (!group)
+        break;
+
+      while (TRUE) {
+        GtkWidget *row = adw_preferences_group_get_row (group, j++);
+        AdwSidebarItem *item;
+
+        if (!row)
+          break;
+
+        item = g_object_get_data (G_OBJECT (row), "-adw-sidebar-item");
+
+        callback (self, item, row);
+      }
+    }
+  }
+}
+
 static gboolean
 list_mapped_idle_cb (AdwSidebar *self)
 {
@@ -1091,17 +1817,23 @@ list_mapped_idle_cb (AdwSidebar *self)
   g_assert (self->listbox);
 
   selected = adw_sidebar_get_selected_item (self);
-  if (!selected)
+  if (!selected) {
+    self->restore_scroll_idle_id = 0;
     return G_SOURCE_REMOVE;
+  }
 
   row = find_list_row (self, selected);
-  if (!row)
+  if (!row) {
+    self->restore_scroll_idle_id = 0;
     return G_SOURCE_REMOVE;
+  }
 
   viewport = gtk_scrolled_window_get_child (GTK_SCROLLED_WINDOW (self->swindow));
 
-  if (scroll_to (viewport, GTK_WIDGET (row)))
+  if (scroll_to (viewport, GTK_WIDGET (row))) {
+    self->restore_scroll_idle_id = 0;
     return G_SOURCE_REMOVE;
+  }
 
   return G_SOURCE_CONTINUE;
 }
@@ -1113,11 +1845,13 @@ list_mapped_cb (AdwSidebar *self)
 
   g_signal_handlers_disconnect_by_func (self->listbox, list_mapped_cb, self);
 
+  g_clear_handle_id (&self->restore_scroll_idle_id, g_source_remove);
+
   if (list_mapped_idle_cb (self) == G_SOURCE_REMOVE)
     return;
 
   /* Sometimes we're already mapped, but not able to scroll yet, so try until it succeeds */
-  g_idle_add (G_SOURCE_FUNC (list_mapped_idle_cb), self);
+  self->restore_scroll_idle_id = g_idle_add (G_SOURCE_FUNC (list_mapped_idle_cb), self);
 }
 
 static gboolean
@@ -1129,17 +1863,23 @@ page_mapped_idle_cb (AdwSidebar *self)
   g_assert (self->page);
 
   selected = adw_sidebar_get_selected_item (self);
-  if (!selected)
+  if (!selected) {
+    self->restore_scroll_idle_id = 0;
     return G_SOURCE_REMOVE;
+  }
 
   row = find_page_row (self, selected);
-  if (!row)
+  if (!row) {
+    self->restore_scroll_idle_id = 0;
     return G_SOURCE_REMOVE;
+  }
 
   viewport = adw_preferences_page_get_viewport (ADW_PREFERENCES_PAGE (self->page));
 
-  if (scroll_to (viewport, GTK_WIDGET (row)))
+  if (scroll_to (viewport, GTK_WIDGET (row))) {
+    self->restore_scroll_idle_id = 0;
     return G_SOURCE_REMOVE;
+  }
 
   return G_SOURCE_CONTINUE;
 }
@@ -1151,16 +1891,24 @@ page_mapped_cb (AdwSidebar *self)
 
   g_signal_handlers_disconnect_by_func (self->page, page_mapped_cb, self);
 
+  g_clear_handle_id (&self->restore_scroll_idle_id, g_source_remove);
+
   if (page_mapped_idle_cb (self) == G_SOURCE_REMOVE)
     return;
 
   /* Sometimes we're already mapped, but not able to scroll yet, so try until it succeeds */
-  g_idle_add (G_SOURCE_FUNC (page_mapped_idle_cb), self);
+  self->restore_scroll_idle_id = g_idle_add (G_SOURCE_FUNC (page_mapped_idle_cb), self);
 }
 
 static void
 recreate_ui (AdwSidebar *self)
 {
+  g_clear_pointer (&self->context_menu, gtk_widget_unparent);
+  g_clear_object (&self->context_menu_item);
+
+  g_clear_handle_id (&self->reset_menu_idle_id, g_source_remove);
+  g_clear_handle_id (&self->restore_scroll_idle_id, g_source_remove);
+
   if (self->page) {
     AdwPreferencesGroup *group;
     guint index = 0;
@@ -1218,7 +1966,7 @@ recreate_ui (AdwSidebar *self)
     gtk_list_box_bind_model (GTK_LIST_BOX (self->listbox),
                              G_LIST_MODEL (self->filtered_items),
                              (GtkListBoxCreateWidgetFunc) create_row,
-                             NULL, NULL);
+                             self, NULL);
 
     g_signal_connect_object (self->filtered_items, "sections-changed",
                              G_CALLBACK (gtk_list_box_invalidate_headers),
@@ -1235,6 +1983,8 @@ recreate_ui (AdwSidebar *self)
 
     g_signal_connect_swapped (self->listbox, "map",
                               G_CALLBACK (list_mapped_cb), self);
+    g_signal_connect_swapped (self->listbox, "keynav-failed",
+                              G_CALLBACK (adw_widget_on_vertical_keynav_failed), self);
   } else {
     self->page = adw_preferences_page_new ();
 
@@ -1298,6 +2048,44 @@ items_changed_cb (AdwSidebar *self,
   }
 }
 
+static gboolean
+adw_sidebar_grab_focus (GtkWidget *widget)
+{
+  AdwSidebar *self = ADW_SIDEBAR (widget);
+
+  if (self->placeholder && gtk_widget_get_child_visible (self->placeholder))
+    return gtk_widget_grab_focus (self->placeholder);
+
+  if (self->listbox) {
+    GtkListBoxRow *row = gtk_list_box_get_row_at_index (GTK_LIST_BOX (self->listbox), 0);
+    if (!row)
+      return FALSE;
+
+    return gtk_widget_grab_focus (GTK_WIDGET (row));
+  }
+
+  if (self->page) {
+    AdwPreferencesGroup *group;
+    GtkWidget *row;
+    int i = 0;
+
+    do {
+      group = adw_preferences_page_get_group (ADW_PREFERENCES_PAGE (self->page), i++);
+    } while (group && !gtk_widget_get_visible (GTK_WIDGET (group)));
+
+    if (!group)
+      return FALSE;
+
+    row = adw_preferences_group_get_row (group, 0);
+    if (!row)
+      return FALSE;
+
+    return gtk_widget_grab_focus (row);
+  }
+
+  return FALSE;
+}
+
 static void
 adw_sidebar_dispose (GObject *object)
 {
@@ -1305,30 +2093,48 @@ adw_sidebar_dispose (GObject *object)
 
   self->in_dispose = TRUE;
 
+  g_clear_handle_id (&self->restore_scroll_idle_id, g_source_remove);
+  g_clear_handle_id (&self->reset_menu_idle_id, g_source_remove);
+
   g_clear_pointer (&self->swindow, gtk_widget_unparent);
   g_clear_pointer (&self->page, gtk_widget_unparent);
   g_clear_pointer (&self->placeholder, gtk_widget_unparent);
+  g_clear_pointer (&self->context_menu, gtk_widget_unparent);
+  g_clear_object (&self->context_menu_item);
 
   if (self->sections_model) {
     guint n = g_list_model_get_n_items (self->sections_model);
 
     g_list_model_items_changed (G_LIST_MODEL (self->sections_model), 0, n, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->sections_model), sections_props[SECTIONS_PROP_N_ITEMS]);
   }
 
   if (self->items_model) {
     guint n = g_list_model_get_n_items (self->items_model);
 
     g_list_model_items_changed (G_LIST_MODEL (self->items_model), 0, n, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->items_model), items_props[ITEMS_PROP_N_ITEMS]);
   }
 
   g_clear_pointer (&self->sections, g_ptr_array_unref);
   g_clear_object (&self->sections_model);
   g_clear_object (&self->filtered_items);
+  g_clear_object (&self->menu_model);
 
   self->items_model = NULL;
   self->listbox = NULL;
 
   G_OBJECT_CLASS (adw_sidebar_parent_class)->dispose (object);
+}
+
+static void
+adw_sidebar_finalize (GObject *object)
+{
+  AdwSidebar *self = ADW_SIDEBAR (object);
+
+  g_clear_pointer (&self->drop_types, g_free);
+
+  G_OBJECT_CLASS (adw_sidebar_parent_class)->finalize (object);
 }
 
 static void
@@ -1361,6 +2167,12 @@ adw_sidebar_get_property (GObject    *object,
   case PROP_SECTIONS:
     g_value_take_object (value, adw_sidebar_get_sections (self));
     break;
+  case PROP_DROP_PRELOAD:
+    g_value_set_boolean (value, adw_sidebar_get_drop_preload (self));
+    break;
+  case PROP_MENU_MODEL:
+    g_value_set_object (value, adw_sidebar_get_menu_model (self));
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     break;
@@ -1388,6 +2200,12 @@ adw_sidebar_set_property (GObject      *object,
   case PROP_PLACEHOLDER:
     adw_sidebar_set_placeholder (self, g_value_get_object (value));
     break;
+  case PROP_DROP_PRELOAD:
+    adw_sidebar_set_drop_preload (self, g_value_get_boolean (value));
+    break;
+  case PROP_MENU_MODEL:
+    adw_sidebar_set_menu_model (self, g_value_get_object (value));
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     break;
@@ -1401,21 +2219,23 @@ adw_sidebar_class_init (AdwSidebarClass *klass)
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
 
   object_class->dispose = adw_sidebar_dispose;
+  object_class->finalize = adw_sidebar_finalize;
   object_class->get_property = adw_sidebar_get_property;
   object_class->set_property = adw_sidebar_set_property;
 
   widget_class->compute_expand = adw_widget_compute_expand;
   widget_class->focus = adw_widget_focus_child;
+  widget_class->grab_focus = adw_sidebar_grab_focus;
 
   /**
    * AdwSidebar:mode:
    *
    * Determines the sidebar's look and behavior.
    *
-   * If set to [enum@Adw.SidebarMode.SIDEBAR], behaves like a sidebar: with a
+   * If set to [enum@Adw.SidebarMode.sidebar], behaves like a sidebar: with a
    * sidebar style and a persistent selection.
    *
-   * If set to [enum@Adw.SidebarMode.PAGE], behaves like a page of boxed lists.
+   * If set to [enum@Adw.SidebarMode.page], behaves like a page of boxed lists.
    * In this mode, the selection is invisible and only tracked to determine the
    * initially selected item once switched back to sidebar mode.
    *
@@ -1440,9 +2260,9 @@ adw_sidebar_class_init (AdwSidebarClass *klass)
    *
    * If set to [const@Gtk.INVALID_LIST_POSITION], no item is selected.
    *
-   * If [property@Sidebar:mode] is set to [enum@Adw.SidebarMode.PAGE], the
+   * If [property@Sidebar:mode] is set to [enum@Adw.SidebarMode.page], the
    * selection is invisible, but still tracked, indicating which item will be
-   * selected once the mode is changed to [enum@Adw.SidebarMode.SIDEBAR].
+   * selected once the mode is changed to [enum@Adw.SidebarMode.sidebar].
    *
    * See also: [property@Sidebar:selected-item].
    *
@@ -1540,6 +2360,38 @@ adw_sidebar_class_init (AdwSidebarClass *klass)
                          G_TYPE_LIST_MODEL,
                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
+  /**
+   * AdwSidebar:drop-preload:
+   *
+   * Whether the drop data should be preloaded on hover.
+   *
+   * See [property@Gtk.DropTarget:preload].
+   *
+   * Since: 1.9
+   */
+  props[PROP_DROP_PRELOAD] =
+    g_param_spec_boolean ("drop-preload", NULL, NULL,
+                          FALSE,
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+  /**
+   * AdwSidebar:menu-model:
+   *
+   * Context menu model for the items.
+   *
+   * When a context menu is shown for an item, it will be constructed from the
+   * provided menu model. Use the [signal@Sidebar::setup-menu] signal to set up
+   * the menu actions for the particular item.
+   *
+   * [property@Sidebar:menu-model] will be preferred over this model if set.
+   *
+   * Since: 1.9
+   */
+  props[PROP_MENU_MODEL] =
+    g_param_spec_object ("menu-model", NULL, NULL,
+                         G_TYPE_MENU_MODEL,
+                         G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
   g_object_class_install_properties (object_class, LAST_PROP, props);
 
   /**
@@ -1565,6 +2417,130 @@ adw_sidebar_class_init (AdwSidebarClass *klass)
                               G_TYPE_FROM_CLASS (klass),
                               adw_marshal_VOID__UINTv);
 
+  /**
+   * AdwSidebar::drop:
+   * @self: a sidebar
+   * @index: index of the item the content was dropped onto
+   * @value: the `GValue` being dropped
+   * @preferred_action: the preferred drop action
+   *
+   * Emitted when content is dropped onto the item at @index.
+   *
+   * The content must be of one of the types set up via
+   * [method@Sidebar.setup_drop_target].
+   *
+   * See [signal@Gtk.DropTarget::drop].
+   *
+   * Returns: whether the drop was accepted
+   *
+   * SinceL 1.9
+   */
+  signals[SIGNAL_DROP] =
+    g_signal_new ("drop",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  g_signal_accumulator_first_wins,
+                  NULL, NULL,
+                  G_TYPE_BOOLEAN,
+                  3,
+                  G_TYPE_UINT,
+                  G_TYPE_VALUE,
+                  GDK_TYPE_DRAG_ACTION);
+
+  /**
+   * AdwSidebar::drop-enter:
+   * @self: a sidebar
+   * @index: index of the hovered item
+   *
+   * Emitted when the pointer enters the item at @index.
+   *
+   * Applications can use this to set their default drop action even when
+   * [property@Sidebar:drop-preload] is set to `FALSE`.
+   *
+   * See [signal@Gtk.DropTarget::enter].
+   *
+   * Returns: the preferred action for the drop
+   *
+   * Since: 1.9
+   */
+  signals[SIGNAL_DROP_ENTER] =
+    g_signal_new ("drop-enter",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  g_signal_accumulator_first_wins,
+                  NULL, NULL,
+                  GDK_TYPE_DRAG_ACTION,
+                  1,
+                  G_TYPE_UINT);
+
+  /**
+   * AdwSidebar::drop-value-loaded:
+   * @self: a sidebar
+   * @index: index of the hovered item
+   * @value: the `GValue` being dropped
+   *
+   * Emitted when the dropped content is preloaded for the item at @index.
+   *
+   * In order for data to be preloaded, [property@Sidebar:drop-preload]
+   * must be set to `TRUE`.
+   *
+   * The content must be of one of the types set up via
+   * [method@Sidebar.setup_drop_target].
+   *
+   * See [property@Gtk.DropTarget:value].
+   *
+   * Returns: the preferred action for the drop
+   *
+   * Since: 1.9
+   */
+  signals[SIGNAL_DROP_VALUE_LOADED] =
+    g_signal_new ("drop-value-loaded",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  g_signal_accumulator_first_wins,
+                  NULL, NULL,
+                  GDK_TYPE_DRAG_ACTION,
+                  2,
+                  G_TYPE_UINT,
+                  G_TYPE_VALUE);
+
+  /**
+   * AdwSidebar::setup-menu:
+   * @self: a sidebar
+   * @item: (nullable): an item in @self
+   *
+   * Emitted when a context menu is opened or closed for @item.
+   *
+   * If the menu has been closed, @item will be set to `NULL`.
+   *
+   * It can be used to set up menu actions before showing the menu, for example
+   * disable actions not applicable to @item.
+   */
+  signals[SIGNAL_SETUP_MENU] =
+    g_signal_new ("setup-menu",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  adw_marshal_VOID__OBJECT,
+                  G_TYPE_NONE,
+                  1,
+                  ADW_TYPE_SIDEBAR_ITEM);
+  g_signal_set_va_marshaller (signals[SIGNAL_SETUP_MENU],
+                              G_TYPE_FROM_CLASS (klass),
+                              adw_marshal_VOID__OBJECTv);
+
+  g_signal_override_class_handler ("drop-enter", G_TYPE_FROM_CLASS (klass),
+                                   G_CALLBACK (drop_enter_default_cb));
+
+  gtk_widget_class_install_action (widget_class, "menu.popup", NULL, popup_menu_cb);
+
+  gtk_widget_class_add_binding_action (widget_class, GDK_KEY_F10, GDK_SHIFT_MASK, "menu.popup", NULL);
+  gtk_widget_class_add_binding_action (widget_class, GDK_KEY_Menu, 0, "menu.popup", NULL);
+
   gtk_widget_class_set_layout_manager_type (widget_class, GTK_TYPE_BIN_LAYOUT);
   gtk_widget_class_set_css_name (widget_class, "sidebar");
 }
@@ -1585,6 +2561,8 @@ adw_sidebar_init (AdwSidebar *self)
 
   g_signal_connect_swapped (self->filtered_items, "items-changed",
                             G_CALLBACK (update_placeholder), self);
+
+  gtk_widget_action_set_enabled (GTK_WIDGET (self), "menu.popup", FALSE);
 
   recreate_ui (self);
 }
@@ -1650,10 +2628,10 @@ adw_sidebar_get_mode (AdwSidebar *self)
  *
  * Sets @self's look and behavior.
  *
- * If set to [enum@Adw.SidebarMode.SIDEBAR], behaves like a sidebar: with a
+ * If set to [enum@Adw.SidebarMode.sidebar], behaves like a sidebar: with a
  * sidebar style and a persistent selection.
  *
- * If set to [enum@Adw.SidebarMode.PAGE], behaves like a page of boxed lists.
+ * If set to [enum@Adw.SidebarMode.page], behaves like a page of boxed lists.
  * In this mode, the selection is invisible and only tracked to determine the
  * initially selected item once switched back to sidebar mode.
  *
@@ -1717,9 +2695,9 @@ adw_sidebar_get_selected (AdwSidebar *self)
  *
  * If set to [const@Gtk.INVALID_LIST_POSITION], no item is selected.
  *
- * If [property@Sidebar:mode] is set to [enum@Adw.SidebarMode.PAGE], the
+ * If [property@Sidebar:mode] is set to [enum@Adw.SidebarMode.page], the
  * selection is invisible, but still tracked, indicating which item will be
- * selected once the mode is changed to [enum@Adw.SidebarMode.SIDEBAR].
+ * selected once the mode is changed to [enum@Adw.SidebarMode.sidebar].
  *
  * See also: [property@Sidebar:selected-item].
  *
@@ -2070,6 +3048,8 @@ adw_sidebar_insert (AdwSidebar        *self,
     g_ptr_array_insert (self->sections, position, section);
     g_list_model_items_changed (self->sections_model, position, 0, 1);
   }
+
+  g_object_notify_by_pspec (G_OBJECT (self->sections_model), sections_props[SECTIONS_PROP_N_ITEMS]);
 }
 
 /**
@@ -2103,6 +3083,7 @@ adw_sidebar_remove (AdwSidebar        *self,
   g_ptr_array_remove_index (self->sections, index);
 
   g_list_model_items_changed (self->sections_model, index, 1, 0);
+  g_object_notify_by_pspec (G_OBJECT (self->sections_model), sections_props[SECTIONS_PROP_N_ITEMS]);
 
   adw_sidebar_section_set_sidebar (section, NULL);
   adw_sidebar_section_set_first_index (section, 0);
@@ -2132,6 +3113,7 @@ adw_sidebar_remove_all (AdwSidebar *self)
   self->sections = g_ptr_array_new_with_free_func (g_object_unref);
 
   g_list_model_items_changed (self->sections_model, 0, len, 0);
+  g_object_notify_by_pspec (G_OBJECT (self->sections_model), sections_props[SECTIONS_PROP_N_ITEMS]);
 
   for (i = 0; i < len; i++) {
     AdwSidebarSection *section = g_ptr_array_index (old_sections, i);
@@ -2141,4 +3123,137 @@ adw_sidebar_remove_all (AdwSidebar *self)
   }
 
   g_ptr_array_unref (old_sections);
+}
+
+/**
+ * adw_sidebar_setup_drop_target:
+ * @self: a sidebar
+ * @actions: the supported actions
+ * @types: (nullable) (transfer none) (array length=n_types):
+ *   all supported `GType`s that can be dropped
+ * @n_types: number of @types
+ *
+ * Sets up a drop target on the items.
+ *
+ * This allows to drag arbitrary content onto items.
+ *
+ * The [signal@Sidebar::drop] signal can be used to handle the drop.
+ *
+ * Since: 1.9
+ */
+void
+adw_sidebar_setup_drop_target (AdwSidebar    *self,
+                               GdkDragAction  actions,
+                               GType         *types,
+                               gsize          n_types)
+{
+  g_return_if_fail (ADW_IS_SIDEBAR (self));
+  g_return_if_fail (n_types == 0 || types != NULL);
+
+  g_clear_pointer (&self->drop_types, g_free);
+
+  self->drop_actions = actions;
+  self->drop_types = g_memdup2 (types, sizeof (GType) * n_types);
+  self->n_drop_types = n_types;
+
+  foreach_row (self, setup_drop_target_cb);
+
+  self->preferred_action = make_action_unique (actions);
+}
+
+/**
+ * adw_sidebar_get_drop_preload:
+ * @self: a sidebar
+ *
+ * Gets whether drop data should be preloaded on hover.
+ *
+ * Returns: whether drop data should be preloaded on hover
+ *
+ * Since: 1.9
+ */
+gboolean
+adw_sidebar_get_drop_preload (AdwSidebar *self)
+{
+  g_return_val_if_fail (ADW_IS_SIDEBAR (self), FALSE);
+
+  return self->drop_preload;
+}
+
+/**
+ * adw_sidebar_set_drop_preload:
+ * @self: a sidebar
+ * @preload: whether to preload drop data
+ *
+ * Sets whether drop data should be preloaded on hover.
+ *
+ * See [property@Gtk.DropTarget:preload].
+ *
+ * Since: 1.9
+ */
+void
+adw_sidebar_set_drop_preload (AdwSidebar *self,
+                              gboolean    preload)
+{
+  g_return_if_fail (ADW_IS_SIDEBAR (self));
+
+  if (preload == self->drop_preload)
+    return;
+
+  self->drop_preload = preload;
+
+  foreach_row (self, set_drop_preload_cb);
+
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_DROP_PRELOAD]);
+}
+
+/**
+ * adw_sidebar_get_menu_model:
+ * @self: a sidebar
+ *
+ * Gets the context menu model for @self's items.
+ *
+ * Returns: (transfer none) (nullable): the context menu model
+ *
+ * Since: 1.9
+ */
+GMenuModel *
+adw_sidebar_get_menu_model (AdwSidebar *self)
+{
+  g_return_val_if_fail (ADW_IS_SIDEBAR (self), NULL);
+
+  return self->menu_model;
+}
+
+/**
+ * adw_sidebar_set_menu_model:
+ * @self: a sidebar
+ * @menu_model: (nullable): a menu model
+ *
+ * Sets the context menu model for @self's items.
+ *
+ * When a context menu is shown for an item, it will be constructed from the
+ * provided menu model. Use the [signal@Sidebar::setup-menu] signal to set up
+ * the menu actions for the particular item.
+ *
+ * [property@Sidebar:menu-model] will be preferred over this model if set.
+ *
+ * Since: 1.9
+ */
+void
+adw_sidebar_set_menu_model (AdwSidebar *self,
+                            GMenuModel *menu_model)
+{
+  g_return_if_fail (ADW_IS_SIDEBAR (self));
+  g_return_if_fail (menu_model == NULL || G_IS_MENU_MODEL (menu_model));
+
+  if (self->menu_model == menu_model)
+    return;
+
+  g_set_object (&self->menu_model, menu_model);
+
+  gtk_widget_action_set_enabled (GTK_WIDGET (self), "menu.popup", !!self->menu_model);
+
+  foreach_row (self, update_has_popup);
+
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_MENU_MODEL]);
 }

@@ -21,7 +21,7 @@
  * AdwColorScheme:
  * @ADW_COLOR_SCHEME_DEFAULT: Inherit the parent color-scheme. When set on the
  *   `AdwStyleManager` returned by [func@StyleManager.get_default], it's
- *   equivalent to `ADW_COLOR_SCHEME_PREFER_LIGHT`.
+ *   equivalent to [enum@Adw.ColorScheme.prefer-light].
  * @ADW_COLOR_SCHEME_FORCE_LIGHT: Always use light appearance.
  * @ADW_COLOR_SCHEME_PREFER_LIGHT: Use light appearance unless the system
  *   prefers dark colors.
@@ -274,11 +274,12 @@ static GHashTable *display_style_managers = NULL;
 static AdwStyleManager *default_instance = NULL;
 
 typedef enum {
-  UPDATE_CONTRAST         = 1 << 0,
-  UPDATE_COLOR_SCHEME = 1 << 1,
-  UPDATE_ACCENT_COLOR = 1 << 2,
-  UPDATE_FONTS        = 1 << 3,
-  UPDATE_ALL = UPDATE_CONTRAST | UPDATE_COLOR_SCHEME | UPDATE_ACCENT_COLOR | UPDATE_FONTS
+  UPDATE_CONTRAST       = 1 << 0,
+  UPDATE_COLOR_SCHEME   = 1 << 1,
+  UPDATE_ACCENT_COLOR   = 1 << 2,
+  UPDATE_FONTS          = 1 << 3,
+  UPDATE_REDUCED_MOTION = 1 << 4,
+  UPDATE_ALL            = 0xFF
 } StylesheetUpdateFlags;
 
 static void
@@ -513,6 +514,17 @@ update_stylesheet (AdwStyleManager       *self,
     self->changing_gtk_settings = FALSE;
   }
 
+  if (flags & UPDATE_REDUCED_MOTION) {
+    GtkReducedMotion reduced_motion;
+
+    g_object_get (self->gtk_settings,
+                  "gtk-interface-reduced-motion", &reduced_motion,
+                  NULL);
+
+    if (self->provider)
+      g_object_set (self->provider, "prefers-reduced-motion", reduced_motion, NULL);
+  }
+
   self->animation_timeout_id =
     g_timeout_add_once (SWITCH_DURATION,
                         (GSourceOnceFunc) enable_animations_cb,
@@ -626,6 +638,12 @@ update_fonts (AdwStyleManager *self)
 }
 
 static void
+notify_reduced_motion_cb (AdwStyleManager *self)
+{
+  update_stylesheet (self, UPDATE_REDUCED_MOTION);
+}
+
+static void
 notify_system_supports_color_schemes_cb (AdwStyleManager *self)
 {
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_SYSTEM_SUPPORTS_COLOR_SCHEMES]);
@@ -687,7 +705,7 @@ adw_style_manager_constructed (GObject *object)
 
       self->provider = gtk_css_provider_new ();
       gtk_css_provider_load_from_resource (self->provider,
-                                           "/org/gnome/Adwaita/styles/main.css");
+                                           "/org/gnome/Adwaita/styles/gtk.css");
       gtk_style_context_add_provider_for_display (self->display,
                                                   GTK_STYLE_PROVIDER (self->provider),
                                                   GTK_STYLE_PROVIDER_PRIORITY_THEME);
@@ -717,6 +735,10 @@ adw_style_manager_constructed (GObject *object)
 
   g_signal_connect_object (self->gtk_settings, "notify::gtk-font-name",
                            G_CALLBACK (update_fonts),
+                           self,
+                           G_CONNECT_SWAPPED);
+  g_signal_connect_object (self->gtk_settings, "notify::gtk-interface-reduced-motion",
+                           G_CALLBACK (notify_reduced_motion_cb),
                            self,
                            G_CONNECT_SWAPPED);
 
@@ -890,26 +912,27 @@ adw_style_manager_class_init (AdwStyleManagerClass *klass)
    * [property@StyleManager:dark] property can be used to query the current
    * effective appearance.
    *
-   * The `ADW_COLOR_SCHEME_PREFER_LIGHT` color scheme results in the application
-   * using light appearance unless the system prefers dark colors. This is the
-   * default value.
+   * The [enum@Adw.ColorScheme.prefer-light] color scheme results in the
+   * application using light appearance unless the system prefers dark colors.
+   * This is the default value.
    *
-   * The `ADW_COLOR_SCHEME_PREFER_DARK` color scheme results in the application
-   * using dark appearance, but can still switch to the light appearance if the
-   * system can prefers it, for example, when the high contrast preference is
+   * The [enum@Adw.ColorScheme.prefer-dark] color scheme results in the
+   * application using dark appearance, but can still switch to the light
+   * appearance if the system can prefers it, for example, when the high
+   * contrast preference is
    * enabled.
    *
-   * The `ADW_COLOR_SCHEME_FORCE_LIGHT` and `ADW_COLOR_SCHEME_FORCE_DARK` values
-   * ignore the system preference entirely. They are useful if the application
-   * wants to match its UI to its content or to provide a separate color scheme
-   * switcher.
+   * The [enum@Adw.ColorScheme.force-light] and [enum@Adw.ColorScheme.force-dark]
+   * values ignore the system preference entirely. They are useful if the
+   * application wants to match its UI to its content or to provide a separate
+   * color scheme switcher.
    *
    * If a per-[class@Gdk.Display] style manager has its color scheme set to
-   * `ADW_COLOR_SCHEME_DEFAULT`, it will inherit the color scheme from the
+   * [enum@Adw.ColorScheme.default], it will inherit the color scheme from the
    * default style manager.
    *
-   * For the default style manager, `ADW_COLOR_SCHEME_DEFAULT` is equivalent to
-   * `ADW_COLOR_SCHEME_PREFER_LIGHT`.
+   * For the default style manager, [enum@Adw.ColorScheme.default] is equivalent
+   * to [enum@Adw.ColorScheme.prefer-light].
    *
    * The [property@StyleManager:system-supports-color-schemes] property can be
    * used to check if the current environment provides a color scheme
@@ -1178,26 +1201,26 @@ adw_style_manager_get_color_scheme (AdwStyleManager *self)
  * [property@StyleManager:dark] property can be used to query the current
  * effective appearance.
  *
- * The `ADW_COLOR_SCHEME_PREFER_LIGHT` color scheme results in the application
- * using light appearance unless the system prefers dark colors. This is the
- * default value.
+ * The [enum@Adw.ColorScheme.prefer-light] color scheme results in the
+ * application using light appearance unless the system prefers dark colors.
+ * This is the default value.
  *
- * The `ADW_COLOR_SCHEME_PREFER_DARK` color scheme results in the application
- * using dark appearance, but can still switch to the light appearance if the
- * system can prefers it, for example, when the high contrast preference is
- * enabled.
+ * The [enum@Adw.ColorScheme.prefer-dark] color scheme results in the
+ * application using dark appearance, but can still switch to the light
+ * appearance if the system can prefers it, for example, when the high contrast
+ * preference is enabled.
  *
- * The `ADW_COLOR_SCHEME_FORCE_LIGHT` and `ADW_COLOR_SCHEME_FORCE_DARK` values
- * ignore the system preference entirely. They are useful if the application
- * wants to match its UI to its content or to provide a separate color scheme
- * switcher.
+ * The [enum@Adw.ColorScheme.force-light] and [enum@Adw.ColorScheme.force-dark]
+ * values ignore the system preference entirely. They are useful if the
+ * application wants to match its UI to its content or to provide a separate
+ * color scheme switcher.
  *
  * If a per-[class@Gdk.Display] style manager has its color scheme set to
- * `ADW_COLOR_SCHEME_DEFAULT`, it will inherit the color scheme from the
+ * [enum@Adw.ColorScheme.default], it will inherit the color scheme from the
  * default style manager.
  *
- * For the default style manager, `ADW_COLOR_SCHEME_DEFAULT` is equivalent to
- * `ADW_COLOR_SCHEME_PREFER_LIGHT`.
+ * For the default style manager, [enum@Adw.ColorScheme.default] is equivalent
+ * to [enum@Adw.ColorScheme.prefer-light].
  *
  * The [property@StyleManager:system-supports-color-schemes] property can be
  * used to check if the current environment provides a color scheme

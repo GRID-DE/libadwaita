@@ -62,7 +62,7 @@
  *
  * ## Accessibility
  *
- * `AdwComboRow` uses the `GTK_ACCESSIBLE_ROLE_COMBO_BOX` role.
+ * `AdwComboRow` uses the [enum@Gtk.AccessibleRole.combo-box] role.
  */
 
 /*
@@ -159,7 +159,8 @@ selection_item_changed (AdwComboRow *self)
 {
   AdwComboRowPrivate *priv = adw_combo_row_get_instance_private (self);
 
-  if (g_list_model_get_n_items (G_LIST_MODEL (priv->current_selection)) > 0) {
+  if (priv->current_selection != NULL &&
+      g_list_model_get_n_items (G_LIST_MODEL (priv->current_selection)) > 0) {
     GtkListItem *item = g_list_model_get_item (G_LIST_MODEL (priv->current_selection), 0);
     char *repr = get_item_representation (self, item);
 
@@ -177,7 +178,7 @@ selection_item_changed (AdwComboRow *self)
                                    GTK_ACCESSIBLE_PROPERTY_VALUE_TEXT);
 
     if (priv->use_subtitle)
-      adw_action_row_set_subtitle (ADW_ACTION_ROW (self), NULL);
+      adw_action_row_set_subtitle (ADW_ACTION_ROW (self), "");
   }
 
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_SELECTED_ITEM]);
@@ -1123,6 +1124,7 @@ adw_combo_row_set_expression (AdwComboRow   *self,
     gtk_expression_ref (priv->expression);
 
   selection_changed (self);
+  selection_item_changed (self);
 
   update_filter (self);
 
@@ -1185,7 +1187,7 @@ adw_combo_row_set_use_subtitle (AdwComboRow *self,
   priv->use_subtitle = use_subtitle;
   selection_changed (self);
   if (!use_subtitle)
-    adw_action_row_set_subtitle (ADW_ACTION_ROW (self), NULL);
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (self), "");
 
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_USE_SUBTITLE]);
 }

@@ -9,6 +9,7 @@
 #include "config.h"
 #include "adw-navigation-view-private.h"
 
+#include "adw-animation-util-private.h"
 #include "adw-gizmo-private.h"
 #include "adw-marshalers.h"
 #include "adw-shadow-helper-private.h"
@@ -16,6 +17,8 @@
 #include "adw-swipeable.h"
 #include "adw-swipe-tracker.h"
 #include "adw-widget-utils-private.h"
+
+#define SPRING_STIFFNESS 1000
 
 /**
  * AdwNavigationView:
@@ -176,7 +179,7 @@
  *
  * ## Accessibility
  *
- * `AdwNavigationView` uses the `GTK_ACCESSIBLE_ROLE_GROUP` role.
+ * `AdwNavigationView` uses the [enum@Gtk.AccessibleRole.group] role.
  *
  * Since: 1.4
  */
@@ -209,7 +212,7 @@
  *
  * ## Accessibility
  *
- * `AdwNavigationPage` uses the `GTK_ACCESSIBLE_ROLE_GROUP` role.
+ * `AdwNavigationPage` uses the [enum@Gtk.AccessibleRole.group] role.
  *
  * Since: 1.4
  */
@@ -279,7 +282,9 @@ struct _AdwNavigationView
   gboolean transition_cancel;
   double transition_progress;
   gboolean gesture_active;
-  AdwNavigationDirection swipe_direction;
+  /* AdwNavigationDirection or -1 */
+  int swipe_direction;
+  gboolean use_crossfade;
 
   AdwShadowHelper *shadow_helper;
   AdwSwipeTracker *swipe_tracker;
@@ -324,6 +329,15 @@ static guint signals[LAST_SIGNAL];
 
 G_DECLARE_FINAL_TYPE (AdwNavigationViewModel, adw_navigation_view_model, ADW, NAVIGATION_VIEW_MODEL, GObject)
 
+enum {
+  MODEL_PROP_0,
+  MODEL_PROP_ITEM_TYPE,
+  MODEL_PROP_N_ITEMS,
+  N_MODEL_PROPS,
+};
+
+static GParamSpec *model_props[N_MODEL_PROPS];
+
 struct _AdwNavigationViewModel
 {
   GObject parent_instance;
@@ -341,6 +355,9 @@ adw_navigation_view_model_get_n_items (GListModel *model)
 {
   AdwNavigationViewModel *self = ADW_NAVIGATION_VIEW_MODEL (model);
 
+  if (G_UNLIKELY (!ADW_IS_NAVIGATION_VIEW (self->view)))
+    return 0;
+
   return g_list_model_get_n_items (G_LIST_MODEL (self->view->navigation_stack));
 }
 
@@ -349,6 +366,9 @@ adw_navigation_view_model_get_item (GListModel *model,
                                     guint       position)
 {
   AdwNavigationViewModel *self = ADW_NAVIGATION_VIEW_MODEL (model);
+
+  if (G_UNLIKELY (!ADW_IS_NAVIGATION_VIEW (self->view)))
+    return NULL;
 
   return g_list_model_get_item (G_LIST_MODEL (self->view->navigation_stack),
                                 position);
@@ -366,13 +386,73 @@ G_DEFINE_FINAL_TYPE_WITH_CODE (AdwNavigationViewModel, adw_navigation_view_model
                                G_IMPLEMENT_INTERFACE (G_TYPE_LIST_MODEL, adw_navigation_view_model_list_model_init))
 
 static void
+adw_navigation_view_model_dispose (GObject *object)
+{
+  AdwNavigationViewModel *self = ADW_NAVIGATION_VIEW_MODEL (object);
+
+  g_clear_weak_pointer (&self->view);
+
+  G_OBJECT_CLASS (adw_navigation_view_model_parent_class)->dispose (object);
+}
+
+static void
+adw_navigation_view_model_get_property (GObject    *object,
+                                        guint       prop_id,
+                                        GValue     *value,
+                                        GParamSpec *pspec)
+{
+  AdwNavigationViewModel *self = ADW_NAVIGATION_VIEW_MODEL (object);
+
+  switch (prop_id) {
+  case MODEL_PROP_ITEM_TYPE:
+    g_value_set_gtype (value, ADW_TYPE_NAVIGATION_PAGE);
+    break;
+  case MODEL_PROP_N_ITEMS:
+    g_value_set_uint (value, adw_navigation_view_model_get_n_items (G_LIST_MODEL (self)));
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+  }
+}
+
+static void
 adw_navigation_view_model_init (AdwNavigationViewModel *self)
 {
 }
 
 static void
-adw_navigation_view_model_class_init (AdwNavigationViewModelClass *class)
+adw_navigation_view_model_class_init (AdwNavigationViewModelClass *klass)
 {
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  object_class->dispose = adw_navigation_view_model_dispose;
+  object_class->get_property = adw_navigation_view_model_get_property;
+
+  /**
+   * AdwNavigationViewModel:item-type:
+   *
+   * The type of the items. See [method@Gio.ListModel.get_item_type].
+   *
+   * Since: 1.9
+   */
+  model_props[MODEL_PROP_ITEM_TYPE] =
+    g_param_spec_gtype ("item-type", NULL, NULL,
+                        ADW_TYPE_NAVIGATION_PAGE,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwNavigationViewModel:n-items:
+   *
+   * The number of items. See [method@Gio.ListModel.get_n_items].
+   *
+   * Since: 1.9
+   */
+  model_props[MODEL_PROP_N_ITEMS] =
+    g_param_spec_uint ("n-items", NULL, NULL,
+                       0, G_MAXUINT, 0,
+                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties (object_class, N_MODEL_PROPS, model_props);
 }
 
 static GListModel *
@@ -381,7 +461,7 @@ adw_navigation_view_model_new (AdwNavigationView *view)
   AdwNavigationViewModel *model;
 
   model = g_object_new (ADW_TYPE_NAVIGATION_VIEW_MODEL, NULL);
-  model->view = view;
+  g_set_weak_pointer (&model->view, view);
 
   return G_LIST_MODEL (model);
 }
@@ -812,6 +892,9 @@ switch_page (AdwNavigationView *self,
 
   gtk_widget_set_child_visible (self->shield, TRUE);
 
+  self->use_crossfade = !self->gesture_active &&
+                        adw_get_reduce_motion (GTK_WIDGET (self));
+
   adw_spring_animation_set_value_from (ADW_SPRING_ANIMATION (self->transition),
                                        self->transition_progress);
   adw_spring_animation_set_value_to (ADW_SPRING_ANIMATION (self->transition),
@@ -876,6 +959,7 @@ push_to_stack (AdwNavigationView *self,
 
     g_list_model_items_changed (self->navigation_stack_model,
                                 length - 1, 0, 1);
+    g_object_notify_by_pspec (G_OBJECT (self->navigation_stack_model), model_props[MODEL_PROP_N_ITEMS]);
   }
 }
 
@@ -891,6 +975,9 @@ pop_from_stack (AdwNavigationView *self,
   guint length, pos, i;
 
   old_page = adw_navigation_view_get_visible_page (self);
+
+  if (page_to == old_page)
+    return;
 
   length = g_list_model_get_n_items (G_LIST_MODEL (self->navigation_stack));
 
@@ -918,9 +1005,11 @@ pop_from_stack (AdwNavigationView *self,
       adw_navigation_view_remove (self, c);
   }
 
-  if (self->navigation_stack_model)
+  if (self->navigation_stack_model) {
     g_list_model_items_changed (self->navigation_stack_model,
                                 pos + 1, length - pos - 1, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->navigation_stack_model), model_props[MODEL_PROP_N_ITEMS]);
+  }
 
   g_slist_free_full (popped, g_object_unref);
 }
@@ -1294,6 +1383,8 @@ begin_swipe_cb (AdwSwipeTracker   *tracker,
   if (self->showing_page || self->hiding_page)
     adw_animation_skip (self->transition);
 
+  self->use_crossfade = FALSE;
+
   self->showing_page = new_page;
   self->hiding_page = g_object_ref (visible_page);
 
@@ -1357,8 +1448,6 @@ end_swipe_cb (AdwSwipeTracker   *tracker,
   if (!self->gesture_active)
     return;
 
-  self->gesture_active = FALSE;
-
   animate = !G_APPROX_VALUE (to, self->transition_progress, DBL_EPSILON) ||
             !G_APPROX_VALUE (velocity, 0, DBL_EPSILON);
 
@@ -1394,6 +1483,8 @@ end_swipe_cb (AdwSwipeTracker   *tracker,
   }
 
   adw_swipe_tracker_set_upper_overshoot (self->swipe_tracker, FALSE);
+
+  self->gesture_active = FALSE;
 }
 
 static void
@@ -1506,7 +1597,10 @@ adw_navigation_view_size_allocate (GtkWidget *widget,
   if (!self->transition_pop)
     progress = 1 - progress;
 
-  offset = (int) round (progress * width);
+  if (self->use_crossfade)
+    offset = 0;
+  else
+    offset = (int) round (progress * width);
 
   if (static_page)
     gtk_widget_allocate (static_page, width, height, baseline, NULL);
@@ -1553,11 +1647,6 @@ adw_navigation_view_snapshot (GtkWidget   *widget,
 {
   AdwNavigationView *self = ADW_NAVIGATION_VIEW (widget);
   AdwNavigationPage *visible_page = NULL;
-  GtkWidget *static_page = NULL, *moving_page = NULL;
-  int width, height;
-  int offset;
-  int clip_x, clip_width;
-  double progress;
 
   visible_page = adw_navigation_view_get_visible_page (self);
 
@@ -1568,55 +1657,75 @@ adw_navigation_view_snapshot (GtkWidget   *widget,
     return;
   }
 
-  if (self->transition_pop) {
-    if (self->showing_page)
-      static_page = GTK_WIDGET (self->showing_page);
-    if (self->hiding_page && self->showing_page != self->hiding_page)
-      moving_page = GTK_WIDGET (self->hiding_page);
+  if (self->use_crossfade) {
+    if (self->showing_page && self->hiding_page && self->showing_page != self->hiding_page) {
+      gtk_snapshot_push_cross_fade (snapshot, self->transition_progress);
+
+      gtk_widget_snapshot_child (widget, GTK_WIDGET (self->hiding_page), snapshot);
+      gtk_snapshot_pop (snapshot);
+
+      gtk_widget_snapshot_child (widget, GTK_WIDGET (self->showing_page), snapshot);
+      gtk_snapshot_pop (snapshot);
+    } else if (self->showing_page) {
+      gtk_widget_snapshot_child (widget, GTK_WIDGET (self->showing_page), snapshot);
+    }
   } else {
-    if (self->hiding_page)
-      static_page = GTK_WIDGET (self->hiding_page);
-    if (self->showing_page && self->showing_page != self->hiding_page)
-      moving_page = GTK_WIDGET (self->showing_page);
+    GtkWidget *static_page = NULL, *moving_page = NULL;
+    int width, height;
+    int offset;
+    int clip_x, clip_width;
+    double progress;
+
+    if (self->transition_pop) {
+      if (self->showing_page)
+        static_page = GTK_WIDGET (self->showing_page);
+      if (self->hiding_page && self->showing_page != self->hiding_page)
+        moving_page = GTK_WIDGET (self->hiding_page);
+    } else {
+      if (self->hiding_page)
+        static_page = GTK_WIDGET (self->hiding_page);
+      if (self->showing_page && self->showing_page != self->hiding_page)
+        moving_page = GTK_WIDGET (self->showing_page);
+    }
+
+    width = gtk_widget_get_width (widget);
+    height = gtk_widget_get_height (widget);
+    progress = self->transition_progress;
+
+    if (!self->transition_pop)
+      progress = 1 - progress;
+
+    offset = (int) round (progress * width);
+
+    if (gtk_widget_get_direction (GTK_WIDGET (self)) == GTK_TEXT_DIR_RTL) {
+      clip_x = width - offset;
+      clip_width = offset;
+    } else {
+      clip_x = 0;
+      clip_width = offset;
+    }
+
+    if (static_page) {
+      gtk_snapshot_push_clip (snapshot, &GRAPHENE_RECT_INIT (clip_x, 0, clip_width, height));
+      gtk_widget_snapshot_child (widget, static_page, snapshot);
+      gtk_snapshot_pop (snapshot);
+    }
+
+    if (gtk_widget_get_direction (GTK_WIDGET (self)) == GTK_TEXT_DIR_RTL)
+      clip_x = -offset;
+    else
+      clip_x = offset;
+
+    clip_width = width;
+
+    if (moving_page) {
+      gtk_snapshot_push_clip (snapshot, &GRAPHENE_RECT_INIT (clip_x, 0, clip_width, height));
+      gtk_widget_snapshot_child (widget, moving_page, snapshot);
+      gtk_snapshot_pop (snapshot);
+    }
+
+    adw_shadow_helper_snapshot (self->shadow_helper, snapshot);
   }
-
-  width = gtk_widget_get_width (widget);
-  height = gtk_widget_get_height (widget);
-  progress = self->transition_progress;
-
-  if (!self->transition_pop)
-    progress = 1 - progress;
-
-  offset = (int) round (progress * width);
-
-  if (gtk_widget_get_direction (GTK_WIDGET (self)) == GTK_TEXT_DIR_RTL) {
-    clip_x = width - offset;
-    clip_width = offset;
-  } else {
-    clip_x = 0;
-    clip_width = offset;
-  }
-
-  if (static_page) {
-    gtk_snapshot_push_clip (snapshot, &GRAPHENE_RECT_INIT (clip_x, 0, clip_width, height));
-    gtk_widget_snapshot_child (widget, static_page, snapshot);
-    gtk_snapshot_pop (snapshot);
-  }
-
-  if (gtk_widget_get_direction (GTK_WIDGET (self)) == GTK_TEXT_DIR_RTL)
-    clip_x = -offset;
-  else
-    clip_x = offset;
-
-  clip_width = width;
-
-  if (moving_page) {
-    gtk_snapshot_push_clip (snapshot, &GRAPHENE_RECT_INIT (clip_x, 0, clip_width, height));
-    gtk_widget_snapshot_child (widget, moving_page, snapshot);
-    gtk_snapshot_pop (snapshot);
-  }
-
-  adw_shadow_helper_snapshot (self->shadow_helper, snapshot);
 }
 
 static void
@@ -1662,9 +1771,11 @@ adw_navigation_view_dispose (GObject *object)
   AdwNavigationView *self = ADW_NAVIGATION_VIEW (object);
   GtkWidget *child;
 
-  if (self->navigation_stack_model)
+  if (self->navigation_stack_model) {
     g_list_model_items_changed (self->navigation_stack_model, 0,
                                 g_list_model_get_n_items (G_LIST_MODEL (self->navigation_stack)), 0);
+    g_object_notify_by_pspec (G_OBJECT (self->navigation_stack_model), model_props[MODEL_PROP_N_ITEMS]);
+  }
 
   g_clear_object (&self->shadow_helper);
   g_clear_object (&self->swipe_tracker);
@@ -2035,7 +2146,7 @@ adw_navigation_view_init (AdwNavigationView *self)
   target = adw_callback_animation_target_new ((AdwAnimationTargetFunc) transition_cb,
                                               self, NULL);
   self->transition = adw_spring_animation_new (GTK_WIDGET (self), 0, 1,
-                                               adw_spring_params_new (1, 1, 1000),
+                                               adw_spring_params_new (1, 1, SPRING_STIFFNESS),
                                                target);
   g_signal_connect_swapped (self->transition, "done",
                             G_CALLBACK (transition_done_cb), self);
@@ -2977,6 +3088,7 @@ adw_navigation_view_replace (AdwNavigationView  *self,
 
     g_list_model_items_changed (self->navigation_stack_model,
                                 0, old_length, length);
+    g_object_notify_by_pspec (G_OBJECT (self->navigation_stack_model), model_props[MODEL_PROP_N_ITEMS]);
   }
 }
 

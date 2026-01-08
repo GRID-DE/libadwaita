@@ -22,7 +22,7 @@
  * Section can optionally have a title, set with the
  * [property@SidebarSection:title] property. If a title is not set, the section
  * will have a separator in front of it, or just spacing in the
- * [enum@Adw.SidebarMode.PAGE] mode.
+ * [enum@Adw.SidebarMode.page] mode.
  *
  * To add items, use [method@SidebarSection.append],
  * [method@SidebarSection.prepend] or [method@SidebarSection.insert].
@@ -78,7 +78,7 @@
  * Result:
  *
  * <picture>
- *   <source srcset="sidebar-section.png" media="(prefers-color-scheme: dark)">
+ *   <source srcset="sidebar-section-dark.png" media="(prefers-color-scheme: dark)">
  *   <img src="sidebar-section.png" alt="sidebar-section">
  * </picture>
  *
@@ -90,6 +90,7 @@ struct _AdwSidebarSection
   GObject parent_instance;
 
   char *title;
+  GMenuModel *menu_model;
 
   GPtrArray *items;
   GListModel *items_model;
@@ -112,6 +113,7 @@ G_DEFINE_FINAL_TYPE_WITH_CODE (AdwSidebarSection, adw_sidebar_section, G_TYPE_OB
 enum {
   PROP_0,
   PROP_TITLE,
+  PROP_MENU_MODEL,
   PROP_ITEMS,
   PROP_SIDEBAR,
   LAST_PROP
@@ -135,6 +137,15 @@ static void adw_sidebar_section_items_list_model_init (GListModelInterface *ifac
 G_DEFINE_FINAL_TYPE_WITH_CODE (AdwSidebarSectionItems, adw_sidebar_section_items, G_TYPE_OBJECT,
                                G_IMPLEMENT_INTERFACE (G_TYPE_LIST_MODEL, adw_sidebar_section_items_list_model_init))
 
+enum {
+  ITEMS_PROP_0,
+  ITEMS_PROP_ITEM_TYPE,
+  ITEMS_PROP_N_ITEMS,
+  N_ITEMS_PROPS,
+};
+
+static GParamSpec *items_props[N_ITEMS_PROPS];
+
 static void
 adw_sidebar_section_items_dispose (GObject *object)
 {
@@ -146,11 +157,58 @@ adw_sidebar_section_items_dispose (GObject *object)
 }
 
 static void
+adw_sidebar_section_items_get_property (GObject    *object,
+                                        guint       prop_id,
+                                        GValue     *value,
+                                        GParamSpec *pspec)
+{
+  AdwSidebarSectionItems *self = ADW_SIDEBAR_SECTION_ITEMS (object);
+
+  switch (prop_id) {
+  case ITEMS_PROP_ITEM_TYPE:
+    g_value_set_gtype (value, ADW_TYPE_SIDEBAR_ITEM);
+    break;
+  case ITEMS_PROP_N_ITEMS:
+    g_value_set_uint (value, g_list_model_get_n_items (G_LIST_MODEL (self)));
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+  }
+}
+
+static void
 adw_sidebar_section_items_class_init (AdwSidebarSectionItemsClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
   object_class->dispose = adw_sidebar_section_items_dispose;
+  object_class->get_property = adw_sidebar_section_items_get_property;
+
+  /**
+   * AdwSidebarSectionItems:item-type:
+   *
+   * The type of the items. See [method@Gio.ListModel.get_item_type].
+   *
+   * Since: 1.9
+   */
+  items_props[ITEMS_PROP_ITEM_TYPE] =
+    g_param_spec_gtype ("item-type", NULL, NULL,
+                        ADW_TYPE_SIDEBAR_ITEM,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwSidebarSectionItems:n-items:
+   *
+   * The number of items. See [method@Gio.ListModel.get_n_items].
+   *
+   * Since: 1.9
+   */
+  items_props[ITEMS_PROP_N_ITEMS] =
+    g_param_spec_uint ("n-items", NULL, NULL,
+                       0, G_MAXUINT, 0,
+                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties (object_class, N_ITEMS_PROPS, items_props);
 }
 
 static void
@@ -169,7 +227,7 @@ adw_sidebar_section_items_get_n_items (GListModel *model)
 {
   AdwSidebarSectionItems *self = ADW_SIDEBAR_SECTION_ITEMS (model);
 
-  if (!self->section)
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR_SECTION (self->section)))
     return 0;
 
   return self->section->items->len;
@@ -182,7 +240,7 @@ adw_sidebar_section_items_get_item (GListModel *model,
   AdwSidebarSectionItems *self = ADW_SIDEBAR_SECTION_ITEMS (model);
   AdwSidebarItem *item;
 
-  if (!self->section)
+  if (G_UNLIKELY (!ADW_IS_SIDEBAR_SECTION (self->section)))
     return NULL;
 
   if (position >= g_list_model_get_n_items (model))
@@ -256,8 +314,12 @@ bound_model_changed_cb (AdwSidebarSection *self,
     adw_sidebar_item_set_index (item, i);
   }
 
-  if (self->items_model)
+  if (self->items_model) {
     g_list_model_items_changed (self->items_model, position, removed, added);
+
+    if (removed != added)
+      g_object_notify_by_pspec (G_OBJECT (self->items_model), items_props[ITEMS_PROP_N_ITEMS]);
+  }
 }
 
 static void
@@ -273,6 +335,7 @@ adw_sidebar_section_dispose (GObject *object)
   if (self->items_model) {
     g_list_model_items_changed (G_LIST_MODEL (self->items_model),
                                 0, self->items->len, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->items_model), items_props[ITEMS_PROP_N_ITEMS]);
   }
 
   if (self->bound_model) {
@@ -283,6 +346,7 @@ adw_sidebar_section_dispose (GObject *object)
     g_clear_object (&self->bound_model);
   }
 
+  g_clear_object (&self->menu_model);
   g_clear_pointer (&self->items, g_ptr_array_unref);
 
   G_OBJECT_CLASS (adw_sidebar_section_parent_class)->dispose (object);
@@ -311,6 +375,9 @@ adw_sidebar_section_get_property (GObject    *object,
   case PROP_TITLE:
     g_value_set_string (value, adw_sidebar_section_get_title (self));
     break;
+  case PROP_MENU_MODEL:
+    g_value_set_object (value, adw_sidebar_section_get_menu_model (self));
+    break;
   case PROP_ITEMS:
     g_value_set_object (value, adw_sidebar_section_get_items (self));
     break;
@@ -334,6 +401,9 @@ adw_sidebar_section_set_property (GObject      *object,
   switch (prop_id) {
   case PROP_TITLE:
     adw_sidebar_section_set_title (self, g_value_get_string (value));
+    break;
+  case PROP_MENU_MODEL:
+    adw_sidebar_section_set_menu_model (self, g_value_get_object (value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -363,6 +433,24 @@ adw_sidebar_section_class_init (AdwSidebarSectionClass *klass)
   props[PROP_TITLE] =
     g_param_spec_string ("title", NULL, NULL,
                          "",
+                         G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+  /**
+   * AdwSidebarSection:menu-model:
+   *
+   * Context menu model for the section items.
+   *
+   * When a context menu is shown for an item, it will be constructed from the
+   * provided menu model. Use the [signal@Sidebar::setup-menu] signal to set up
+   * the menu actions for the particular item.
+   *
+   * If not set, [property@Sidebar:menu-model] will be used instead.
+   *
+   * Since: 1.9
+   */
+  props[PROP_MENU_MODEL] =
+    g_param_spec_object ("menu-model", NULL, NULL,
+                         G_TYPE_MENU_MODEL,
                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
   /**
@@ -476,6 +564,54 @@ adw_sidebar_section_set_title (AdwSidebarSection *self,
     return;
 
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_TITLE]);
+}
+
+/**
+ * adw_sidebar_section_get_menu_model:
+ * @self: a sidebar section
+ *
+ * Gets the context menu model for @self's items.
+ *
+ * Returns: (transfer none) (nullable): the context menu model
+ *
+ * Since: 1.9
+ */
+GMenuModel *
+adw_sidebar_section_get_menu_model (AdwSidebarSection *self)
+{
+  g_return_val_if_fail (ADW_IS_SIDEBAR_SECTION (self), NULL);
+
+  return self->menu_model;
+}
+
+/**
+ * adw_sidebar_section_set_menu_model:
+ * @self: a sidebar section
+ * @menu_model: (nullable): a menu model
+ *
+ * Sets the context menu model for @self's items.
+ *
+ * When a context menu is shown for an item, it will be constructed from the
+ * provided menu model. Use the [signal@Sidebar::setup-menu] signal to set up
+ * the menu actions for the particular item.
+ *
+ * If not set, [property@Sidebar:menu-model] will be used instead.
+ *
+ * Since: 1.9
+ */
+void
+adw_sidebar_section_set_menu_model (AdwSidebarSection *self,
+                                    GMenuModel        *menu_model)
+{
+  g_return_if_fail (ADW_IS_SIDEBAR_SECTION (self));
+  g_return_if_fail (menu_model == NULL || G_IS_MENU_MODEL (menu_model));
+
+  if (self->menu_model == menu_model)
+    return;
+
+  g_set_object (&self->menu_model, menu_model);
+
+  g_object_notify_by_pspec (G_OBJECT (self), props[PROP_MENU_MODEL]);
 }
 
 /**
@@ -601,8 +737,10 @@ adw_sidebar_section_insert (AdwSidebarSection *self,
     adw_sidebar_item_set_section (item, self);
     adw_sidebar_item_set_index (item, self->items->len - 1);
 
-    if (self->items_model)
+    if (self->items_model) {
       g_list_model_items_changed (self->items_model, self->items->len - 1, 0, 1);
+      g_object_notify_by_pspec (G_OBJECT (self->items_model), items_props[ITEMS_PROP_N_ITEMS]);
+    }
 
     return;
   }
@@ -617,8 +755,10 @@ adw_sidebar_section_insert (AdwSidebarSection *self,
     adw_sidebar_item_set_index (item2, i);
   }
 
-  if (self->items_model)
+  if (self->items_model) {
     g_list_model_items_changed (self->items_model, position, 0, 1);
+    g_object_notify_by_pspec (G_OBJECT (self->items_model), items_props[ITEMS_PROP_N_ITEMS]);
+  }
 }
 
 /**
@@ -656,8 +796,10 @@ adw_sidebar_section_remove (AdwSidebarSection *self,
     adw_sidebar_item_set_index (item2, i);
   }
 
-  if (self->items_model)
+  if (self->items_model) {
     g_list_model_items_changed (self->items_model, index, 1, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->items_model), items_props[ITEMS_PROP_N_ITEMS]);
+  }
 
   adw_sidebar_item_set_section (item, NULL);
   adw_sidebar_item_set_index (item, 0);
@@ -688,8 +830,10 @@ adw_sidebar_section_remove_all (AdwSidebarSection *self)
   old_items = self->items;
   self->items = g_ptr_array_new_with_free_func (g_object_unref);
 
-  if (self->items_model)
+  if (self->items_model) {
     g_list_model_items_changed (self->items_model, 0, len, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->items_model), items_props[ITEMS_PROP_N_ITEMS]);
+  }
 
   for (i = 0; i < len; i++) {
     AdwSidebarItem *item = g_ptr_array_index (old_items, i);

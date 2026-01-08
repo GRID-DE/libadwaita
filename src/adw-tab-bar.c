@@ -34,6 +34,25 @@
  * them. Pinned tabs always stay visible and aren't a part of the scrollable
  * area.
  *
+ * ## Drag-and-Drop
+ *
+ * `AdwTabBar` tabs can have an additional drop target for arbitrary content.
+ *
+ * Use [method@TabBar.setup_extra_drop_target] to set it up, specifying the
+ * supported content types and drag actions, then connect to
+ * [signal@TabBar::extra-drag-drop] to handle a drop.
+ *
+ * In some cases, it may be necessary to determine the used action based on the
+ * content. In that case, set [property@TabBar:extra-drag-preload] to `TRUE`
+ * and connect to [signal@TabBar::extra-drag-value] signal, then return the
+ * action from its handler. To access this action from the
+ * [signal@TabBar::extra-drag-drop] handler, use the
+ * [property@TabBar:extra-drag-preferred-action] property.
+ *
+ * [signal@TabBar::extra-drag-value] is also always emitted when starting to
+ * hover an item, with a `NULL` value. This happens even when
+ * [property@TabBar:extra-drag-preload] is `FALSE`.
+ *
  * ## CSS nodes
  *
  * `AdwTabBar` has a single CSS node with name `tabbar`.
@@ -638,11 +657,12 @@ adw_tab_bar_class_init (AdwTabBarClass *klass)
   /**
    * AdwTabBar:extra-drag-preferred-action:
    *
-   * The unique action on the `current-drop` of the
-   * [signal@TabBar::extra-drag-drop].
+   * The current drag action during a drop.
    *
-   * This property should only be used during a [signal@TabBar::extra-drag-drop]
-   * and is always a subset of what was originally passed to
+   * This property should only be used from inside a
+   * [signal@TabBar::extra-drag-drop] handler.
+   *
+   * The action will be a subset of what was originally passed to
    * [method@TabBar.setup_extra_drop_target].
    *
    * Since: 1.4
@@ -674,14 +694,14 @@ adw_tab_bar_class_init (AdwTabBarClass *klass)
    * @page: the page matching the tab the content was dropped onto
    * @value: the `GValue` being dropped
    *
-   * This signal is emitted when content is dropped onto a tab.
+   * Emitted when content is dropped onto a tab.
    *
    * The content must be of one of the types set up via
    * [method@TabBar.setup_extra_drop_target].
    *
    * See [signal@Gtk.DropTarget::drop].
    *
-   * Returns: whether the drop was accepted for @page
+   * Returns: whether the drop was accepted
    */
   signals[SIGNAL_EXTRA_DRAG_DROP] =
     g_signal_new ("extra-drag-drop",
@@ -699,9 +719,9 @@ adw_tab_bar_class_init (AdwTabBarClass *klass)
    * AdwTabBar::extra-drag-value:
    * @self: a tab bar
    * @page: the page matching the tab the content was dropped onto
-   * @value: the `GValue` being dropped
+   * @value: (nullable): the `GValue` being dropped
    *
-   * This signal is emitted when the dropped content is preloaded.
+   * Emitted when the dropped content is preloaded.
    *
    * In order for data to be preloaded, [property@TabBar:extra-drag-preload]
    * must be set to `TRUE`.
@@ -711,7 +731,7 @@ adw_tab_bar_class_init (AdwTabBarClass *klass)
    *
    * See [property@Gtk.DropTarget:value].
    *
-   * Returns: the preferred action for the drop on @page
+   * Returns: the preferred action for the drop
    *
    * Since: 1.3
    */
@@ -1171,8 +1191,6 @@ adw_tab_bar_set_inverted (AdwTabBar *self,
  *   all supported `GType`s that can be dropped
  * @n_types: number of @types
  *
- * Sets the supported types for this drop target.
- *
  * Sets up an extra drop target on tabs.
  *
  * This allows to drag arbitrary content onto tabs, for example URLs in a web
@@ -1200,9 +1218,15 @@ adw_tab_bar_setup_extra_drop_target (AdwTabBar     *self,
  * adw_tab_bar_get_extra_drag_preferred_action:
  * @self: a tab bar
  *
- * Gets the current action during a drop on the extra_drop_target.
+ * Gets the current drag action during a drop.
  *
- * Returns: the drag action of the current drop.
+ * This method should only be used from inside a
+ * [signal@TabBar::extra-drag-drop] handler.
+ *
+ * The action will be a subset of what was originally passed to
+ * [method@TabBar.setup_extra_drop_target].
+ *
+ * Returns: the drag action of the current drop
  *
  * Since: 1.4
  */

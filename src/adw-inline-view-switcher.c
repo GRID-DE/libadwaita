@@ -68,8 +68,8 @@
  *
  * ## Accessibility
  *
- * The internal toggle group uses the `GTK_ACCESSIBLE_ROLE_TAB_LIST` role. Its
- * toggles use the `GTK_ACCESSIBLE_ROLE_TAB` role.
+ * The internal toggle group uses the [enum@Gtk.AccessibleRole.tab-list] role.
+ * Its toggles use the [enum@Gtk.AccessibleRole.tab] role.
  *
  * See also: [class@ViewSwitcher], [class@ViewSwitcherBar],
  * [class@ViewSwitcherSidebar].
@@ -126,22 +126,6 @@ notify_active_cb (AdwInlineViewSwitcher *self)
   index = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (toggle), "child-index"));
 
   gtk_selection_model_select_item (GTK_SELECTION_MODEL (self->pages), index, TRUE);
-}
-
-static gboolean
-transform_badge (GBinding     *binding,
-                 const GValue *input,
-                 GValue       *output,
-                 gpointer      user_data)
-{
-  guint badge_number = g_value_get_uint (input);
-
-  if (badge_number > 0)
-    g_value_take_string (output, g_strdup_printf ("%u", badge_number));
-  else
-    g_value_set_string (output, NULL);
-
-  return TRUE;
 }
 
 static gboolean
@@ -269,8 +253,7 @@ update_toggle (AdwInlineViewSwitcher *self,
       gtk_widget_set_valign (indicator, GTK_ALIGN_CENTER);
 
       g_object_bind_property (page, "needs-attention", indicator, "needs-attention", G_BINDING_SYNC_CREATE);
-      g_object_bind_property_full (page, "badge-number", indicator, "badge", G_BINDING_SYNC_CREATE,
-                                   transform_badge, NULL, NULL, NULL);
+      g_object_bind_property (page, "badge-number", indicator, "badge-number", G_BINDING_SYNC_CREATE);
       g_object_bind_property (page, "title", label, "label", G_BINDING_SYNC_CREATE);
       g_object_bind_property (page, "use-underline", label, "use-underline", G_BINDING_SYNC_CREATE);
       g_object_bind_property_full (self, "can-shrink", label, "ellipsize", G_BINDING_SYNC_CREATE,
@@ -280,6 +263,8 @@ update_toggle (AdwInlineViewSwitcher *self,
 
       adw_indicator_bin_set_child (ADW_INDICATOR_BIN (indicator), label);
       adw_bin_set_child (ADW_BIN (child), indicator);
+
+      g_object_bind_property (indicator, "description", toggle, "description", G_BINDING_SYNC_CREATE);
     }
     break;
   case ADW_INLINE_VIEW_SWITCHER_ICONS:
@@ -291,13 +276,14 @@ update_toggle (AdwInlineViewSwitcher *self,
       gtk_widget_set_valign (indicator, GTK_ALIGN_CENTER);
 
       g_object_bind_property (page, "needs-attention", indicator, "needs-attention", G_BINDING_SYNC_CREATE);
-      g_object_bind_property_full (page, "badge-number", indicator, "badge", G_BINDING_SYNC_CREATE,
-                                   transform_badge, NULL, NULL, NULL);
+      g_object_bind_property (page, "badge-number", indicator, "badge-number", G_BINDING_SYNC_CREATE);
       g_object_bind_property_full (page, "icon-name", image, "icon-name", G_BINDING_SYNC_CREATE,
                                    transform_icon_name, NULL, NULL, NULL);
 
       adw_indicator_bin_set_child (ADW_INDICATOR_BIN (indicator), image);
       adw_bin_set_child (ADW_BIN (child), indicator);
+
+      g_object_bind_property (indicator, "description", toggle, "description", G_BINDING_SYNC_CREATE);
     }
     break;
   case ADW_INLINE_VIEW_SWITCHER_BOTH:
@@ -313,8 +299,7 @@ update_toggle (AdwInlineViewSwitcher *self,
       gtk_widget_set_valign (indicator, GTK_ALIGN_CENTER);
 
       g_object_bind_property (page, "needs-attention", indicator, "needs-attention", G_BINDING_SYNC_CREATE);
-      g_object_bind_property_full (page, "badge-number", indicator, "badge", G_BINDING_SYNC_CREATE,
-                                   transform_badge, NULL, NULL, NULL);
+      g_object_bind_property (page, "badge-number", indicator, "badge-number", G_BINDING_SYNC_CREATE);
       g_object_bind_property_full (page, "icon-name", image, "icon-name", G_BINDING_SYNC_CREATE,
                                    transform_icon_name, NULL, NULL, NULL);
       g_object_bind_property (page, "title", label, "label", G_BINDING_SYNC_CREATE);
@@ -328,6 +313,8 @@ update_toggle (AdwInlineViewSwitcher *self,
       gtk_box_append (GTK_BOX (box), indicator);
       gtk_box_append (GTK_BOX (box), label);
       adw_bin_set_child (ADW_BIN (child), box);
+
+      g_object_bind_property (indicator, "description", toggle, "description", G_BINDING_SYNC_CREATE);
     }
     break;
   default:

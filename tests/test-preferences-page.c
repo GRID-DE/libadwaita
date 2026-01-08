@@ -56,7 +56,10 @@ test_adw_preferences_page_title (void)
   adw_preferences_page_set_title (page, "Dummy title");
   g_assert_cmpstr (adw_preferences_page_get_title (page), ==, "Dummy title");
 
-  adw_preferences_page_set_title (page, NULL);
+  adw_preferences_page_set_title (page, "<b>Dummy title</b>");
+  g_assert_cmpstr (adw_preferences_page_get_title (page), ==, "<b>Dummy title</b>");
+
+  adw_preferences_page_set_title (page, "");
   g_assert_cmpstr (adw_preferences_page_get_title (page), ==, "");
 
   g_assert_finalize_object (page);
@@ -75,7 +78,10 @@ test_adw_preferences_page_description (void)
   adw_preferences_page_set_description (page, "Dummy description");
   g_assert_cmpstr (adw_preferences_page_get_description (page), ==, "Dummy description");
 
-  adw_preferences_page_set_description (page, NULL);
+  adw_preferences_page_set_description (page, "<b>Dummy description</b>");
+  g_assert_cmpstr (adw_preferences_page_get_description (page), ==, "<b>Dummy description</b>");
+
+  adw_preferences_page_set_description (page, "");
   g_assert_cmpstr (adw_preferences_page_get_description (page), ==, "");
 
   g_assert_finalize_object (page);

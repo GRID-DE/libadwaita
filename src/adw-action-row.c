@@ -548,7 +548,7 @@ adw_action_row_get_subtitle (AdwActionRow *self)
 
   priv = adw_action_row_get_instance_private (self);
 
-  return gtk_label_get_text (priv->subtitle);
+  return gtk_label_get_label (priv->subtitle);
 }
 
 /**
@@ -568,6 +568,7 @@ adw_action_row_set_subtitle (AdwActionRow *self,
   AdwActionRowPrivate *priv;
 
   g_return_if_fail (ADW_IS_ACTION_ROW (self));
+  g_return_if_fail (subtitle != NULL);
 
   priv = adw_action_row_get_instance_private (self);
 

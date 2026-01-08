@@ -82,8 +82,8 @@
  *
  * ## Accessibility
  *
- * `AdwViewStack` uses the `GTK_ACCESSIBLE_ROLE_TAB_PANEL` for the stack pages
- * which are the accessible parent objects of the child widgets.
+ * `AdwViewStack` uses the [enum@Gtk.AccessibleRole.tab-panel] for the stack
+ * pages which are the accessible parent objects of the child widgets.
  */
 
 /**
@@ -170,6 +170,8 @@ struct _AdwViewStackPages
 
 enum {
   PAGES_PROP_0,
+  PAGES_PROP_ITEM_TYPE,
+  PAGES_PROP_N_ITEMS,
   PAGES_PROP_SELECTED_PAGE,
   N_PAGES_PROPS,
 };
@@ -179,7 +181,7 @@ static GParamSpec *pages_props[N_PAGES_PROPS];
 struct _AdwViewStack {
   GtkWidget parent_instance;
 
-  GList *children;
+  GPtrArray *children;
 
   AdwViewStackPage *visible_child;
 
@@ -582,7 +584,7 @@ adw_view_stack_pages_get_n_items (GListModel *model)
 {
   AdwViewStackPages *self = ADW_VIEW_STACK_PAGES (model);
 
-  return g_list_length (self->stack->children);
+  return self->stack->children->len;
 }
 
 static gpointer
@@ -592,10 +594,10 @@ adw_view_stack_pages_get_item (GListModel *model,
   AdwViewStackPages *self = ADW_VIEW_STACK_PAGES (model);
   AdwViewStackPage *page;
 
-  page = g_list_nth_data (self->stack->children, position);
-
-  if (!page)
+  if (position >= self->stack->children->len)
     return NULL;
+
+  page = g_ptr_array_index (self->stack->children, position);
 
   return g_object_ref (page);
 }
@@ -615,37 +617,31 @@ adw_view_stack_pages_get_section (GtkSectionModel *model,
                                   guint           *out_end)
 {
   AdwViewStackPages *self = ADW_VIEW_STACK_PAGES (model);
-  GList *l = g_list_nth (self->stack->children, position);
   guint start, end;
 
-  if (!l->data) {
-    start = 0;
-    end = g_list_model_get_n_items (G_LIST_MODEL (model));
-  } else {
-    GList *start_iter = l, *end_iter = l->next;
+  if (position >= self->stack->children->len) {
+    if (out_start)
+      *out_start = self->stack->children->len;
+    if (out_end)
+      *out_end = G_MAXUINT;
 
-    start = position;
-    end = position + 1;
+    return;
+  }
 
-    while (start > 0 && start_iter && start_iter->data) {
-      AdwViewStackPage *page = start_iter->data;
+  end = position + 1;
 
-      if (adw_view_stack_page_get_starts_section (page))
-        break;
+  for (start = position; start > 0; start--) {
+    AdwViewStackPage *page = g_ptr_array_index (self->stack->children, start);
 
-      start--;
-      start_iter = start_iter->prev;
-    }
+    if (adw_view_stack_page_get_starts_section (page))
+      break;
+  }
 
-    while (end_iter && end_iter->data) {
-      AdwViewStackPage *page = end_iter->data;
+  for (end = position + 1; end <= self->stack->children->len; end++) {
+    AdwViewStackPage *page = g_ptr_array_index (self->stack->children, end - 1);
 
-      if (adw_view_stack_page_get_starts_section (page))
-        break;
-
-      end++;
-      end_iter = end_iter->next;
-    }
+    if (adw_view_stack_page_get_starts_section (page))
+      break;
   }
 
   if (out_start)
@@ -667,7 +663,10 @@ adw_view_stack_pages_is_selected (GtkSelectionModel *model,
   AdwViewStackPages *self = ADW_VIEW_STACK_PAGES (model);
   AdwViewStackPage *page;
 
-  page = g_list_nth_data (self->stack->children, position);
+  if (position >= self->stack->children->len)
+    return FALSE;
+
+  page = g_ptr_array_index (self->stack->children, position);
 
   return page && page == self->stack->visible_child;
 }
@@ -680,7 +679,10 @@ adw_view_stack_pages_select_item (GtkSelectionModel *model,
   AdwViewStackPages *self = ADW_VIEW_STACK_PAGES (model);
   AdwViewStackPage *page;
 
-  page = g_list_nth_data (self->stack->children, position);
+  if (position >= self->stack->children->len)
+    return FALSE;
+
+  page = g_ptr_array_index (self->stack->children, position);
 
   adw_view_stack_set_visible_child (self->stack, page->widget);
 
@@ -770,6 +772,12 @@ adw_view_stack_pages_get_property (GObject    *object,
   AdwViewStackPages *self = ADW_VIEW_STACK_PAGES (object);
 
   switch (prop_id) {
+  case PAGES_PROP_ITEM_TYPE:
+    g_value_set_gtype (value, ADW_TYPE_VIEW_STACK_PAGE);
+    break;
+  case PAGES_PROP_N_ITEMS:
+    g_value_set_uint (value, adw_view_stack_pages_get_n_items (G_LIST_MODEL (self)));
+    break;
   case PAGES_PROP_SELECTED_PAGE:
     g_value_set_object (value, adw_view_stack_pages_get_selected_page (self));
     break;
@@ -809,6 +817,30 @@ adw_view_stack_pages_class_init (AdwViewStackPagesClass *class)
   object_class->set_property = adw_view_stack_pages_set_property;
 
   /**
+   * AdwViewStackPages:item-type:
+   *
+   * The type of the items. See [method@Gio.ListModel.get_item_type].
+   *
+   * Since: 1.9
+   */
+  pages_props[PAGES_PROP_ITEM_TYPE] =
+    g_param_spec_gtype ("item-type", NULL, NULL,
+                        ADW_TYPE_VIEW_STACK_PAGE,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * AdwViewStackPages:n-items:
+   *
+   * The number of items. See [method@Gio.ListModel.get_n_items].
+   *
+   * Since: 1.9
+   */
+  pages_props[PAGES_PROP_N_ITEMS] =
+    g_param_spec_uint ("n-items", NULL, NULL,
+                       0, G_MAXUINT, 0,
+                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
    * AdwViewStackPages:selected-page:
    *
    * The selected [class@ViewStackPage] within the [class@ViewStackPages].
@@ -839,31 +871,19 @@ adw_view_stack_pages_new (AdwViewStack *stack)
   return pages;
 }
 
-static GList *
-find_link_for_widget (AdwViewStack *self,
-                      GtkWidget    *child)
-{
-  AdwViewStackPage *page;
-  GList *l;
-
-  for (l = self->children; l; l = l->next) {
-    page = l->data;
-
-    if (page->widget == child)
-      return l;
-  }
-
-  return NULL;
-}
-
 static AdwViewStackPage *
 find_page_for_widget (AdwViewStack *self,
                       GtkWidget    *child)
 {
-  GList *l = find_link_for_widget (self, child);
+  AdwViewStackPage *page;
+  guint i;
 
-  if (l)
-    return l->data;
+  for (i = 0; i < self->children->len; i++) {
+    page = g_ptr_array_index (self->children, i);
+
+    if (page->widget == child)
+      return page;
+  }
 
   return NULL;
 }
@@ -873,10 +893,10 @@ find_page_for_name (AdwViewStack *self,
                     const char   *name)
 {
   AdwViewStackPage *page;
-  GList *l;
+  guint i;
 
-  for (l = self->children; l; l = l->next) {
-    page = l->data;
+  for (i = 0; i < self->children->len; i++) {
+    page = g_ptr_array_index (self->children, i);
 
     if (g_strcmp0 (page->name, name) == 0)
       return page;
@@ -940,10 +960,10 @@ set_visible_child (AdwViewStack     *self,
 
   /* If none, pick first visible */
   if (!page) {
-    GList *l;
+    guint i;
 
-    for (l = self->children; l; l = l->next) {
-      AdwViewStackPage *p = l->data;
+    for (i = 0; i < self->children->len; i++) {
+      AdwViewStackPage *p = g_ptr_array_index (self->children, i);
 
       if (gtk_widget_get_visible (p->widget)) {
         page = p;
@@ -957,11 +977,11 @@ set_visible_child (AdwViewStack     *self,
     return;
 
   if (self->pages) {
-    guint position;
-    GList *l;
+    guint position, i;
 
-    for (l = self->children, position = 0; l; l = l->next, position++) {
-      AdwViewStackPage *p = l->data;
+    for (i = 0, position = 0; i < self->children->len; i++, position++) {
+      AdwViewStackPage *p = g_ptr_array_index (self->children, i);
+
       if (p == self->visible_child)
         old_pos = position;
       else if (p == page)
@@ -1090,13 +1110,13 @@ static void
 add_page (AdwViewStack     *self,
           AdwViewStackPage *page)
 {
-  GList *l;
-
   g_return_if_fail (page->widget != NULL);
 
   if (page->name) {
-    for (l = self->children; l; l = l->next) {
-      AdwViewStackPage *p = l->data;
+    guint i;
+
+    for (i = 0; i < self->children->len; i++) {
+      AdwViewStackPage *p = g_ptr_array_index (self->children, i);
 
       if (p->name && g_strcmp0 (p->name, page->name) == 0) {
         g_warning ("While adding page: duplicate child name in AdwViewStack: %s", page->name);
@@ -1105,21 +1125,23 @@ add_page (AdwViewStack     *self,
     }
   }
 
-  if (self->children) {
-    AdwViewStackPage *prev_last = g_list_last (self->children)->data;
+  if (self->children->len > 0) {
+    AdwViewStackPage *prev_last = g_ptr_array_index (self->children, self->children->len - 1);
 
     prev_last->next_page = page;
   } else {
     page->next_page = NULL;
   }
 
-  self->children = g_list_append (self->children, g_object_ref (page));
+  g_ptr_array_add (self->children, g_object_ref (page));
 
   gtk_widget_set_child_visible (page->widget, FALSE);
   gtk_widget_set_parent (page->widget, GTK_WIDGET (self));
 
-  if (self->pages)
-    g_list_model_items_changed (G_LIST_MODEL (self->pages), g_list_length (self->children) - 1, 0, 1);
+  if (self->pages) {
+    g_list_model_items_changed (G_LIST_MODEL (self->pages), self->children->len - 1, 0, 1);
+    g_object_notify_by_pspec (G_OBJECT (self->pages), pages_props[PAGES_PROP_N_ITEMS]);
+  }
 
   g_signal_connect (page->widget, "notify::visible",
                     G_CALLBACK (stack_child_visibility_notify_cb), self);
@@ -1165,13 +1187,11 @@ stack_remove (AdwViewStack  *self,
 {
   AdwViewStackPage *page;
   gboolean was_visible;
-  GList *l;
+  guint i;
 
-  l = find_link_for_widget (self, child);
-  if (!l)
+  page = find_page_for_widget (self, child);
+  if (!page)
     return;
-
-  page = l->data;
 
   g_signal_handlers_disconnect_by_func (child,
                                         stack_child_visibility_notify_cb,
@@ -1186,14 +1206,14 @@ stack_remove (AdwViewStack  *self,
 
   g_clear_object (&page->widget);
 
-  l = l->prev;
+  g_ptr_array_remove (self->children, page);
 
-  self->children = g_list_remove (self->children, page);
-
-  if (l) {
-    AdwViewStackPage *prev_page = l->data;
-
-    prev_page->next_page = page->next_page;
+  for (i = 0; i < self->children->len; i++) {
+    AdwViewStackPage *prev_page = g_ptr_array_index (self->children, i);
+    if (prev_page->next_page == page) {
+      prev_page->next_page = page->next_page;
+      break;
+    }
   }
 
   g_object_unref (page);
@@ -1295,7 +1315,7 @@ adw_view_stack_measure (GtkWidget      *widget,
   int child_min, child_nat, child_for_size;
   int last_size, last_opposite_size;
   double t;
-  GList *l;
+  guint i;
 
   if (self->last_visible_child != NULL && !self->homogeneous[orientation]) {
     t = adw_animation_get_value (self->animation);
@@ -1336,8 +1356,8 @@ adw_view_stack_measure (GtkWidget      *widget,
   *minimum = 0;
   *natural = 0;
 
-  for (l = self->children; l; l = l->next) {
-    AdwViewStackPage *page = l->data;
+  for (i = 0; i < self->children->len; i++) {
+    AdwViewStackPage *page = g_ptr_array_index (self->children, i);
     GtkWidget *child = page->widget;
 
     if (!self->homogeneous[orientation] &&
@@ -1458,9 +1478,11 @@ adw_view_stack_dispose (GObject *object)
   AdwViewStack *self = ADW_VIEW_STACK (object);
   GtkWidget *child;
 
-  if (self->pages)
+  if (self->pages) {
     g_list_model_items_changed (G_LIST_MODEL (self->pages), 0,
-                                g_list_length (self->children), 0);
+                                self->children->len, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->pages), pages_props[PAGES_PROP_N_ITEMS]);
+  }
 
   while ((child = gtk_widget_get_first_child (GTK_WIDGET (self))))
     stack_remove (self, child, TRUE);
@@ -1474,6 +1496,8 @@ adw_view_stack_finalize (GObject *object)
   AdwViewStack *self = ADW_VIEW_STACK (object);
 
   g_clear_weak_pointer (&self->pages);
+
+  g_ptr_array_free (self->children, TRUE);
 
   G_OBJECT_CLASS (adw_view_stack_parent_class)->finalize (object);
 }
@@ -1627,6 +1651,7 @@ adw_view_stack_init (AdwViewStack *self)
   self->homogeneous[GTK_ORIENTATION_VERTICAL] = TRUE;
   self->homogeneous[GTK_ORIENTATION_HORIZONTAL] = TRUE;
   self->transition_duration = 200;
+  self->children = g_ptr_array_new ();
 
   target = adw_callback_animation_target_new ((AdwAnimationTargetFunc) transition_cb,
                                               self, NULL);
@@ -1667,8 +1692,8 @@ adw_view_stack_accessible_get_first_accessible_child (GtkAccessible *accessible)
 {
   AdwViewStack *self = ADW_VIEW_STACK (accessible);
 
-  if (self->children && self->children->data)
-    return g_object_ref (self->children->data);
+  if (self->children->len > 0)
+    return g_object_ref (g_ptr_array_index (self->children, 0));
 
   return NULL;
 }
@@ -1677,6 +1702,27 @@ static void
 adw_view_stack_accessible_init (GtkAccessibleInterface *iface)
 {
   iface->get_first_accessible_child = adw_view_stack_accessible_get_first_accessible_child;
+}
+
+static void
+update_page (AdwViewStackPage *self)
+{
+  if (self->title && *self->title) {
+    if (self->use_underline) {
+      char *stripped_label = adw_strip_mnemonic (self->title);
+      gtk_accessible_update_property (GTK_ACCESSIBLE (self),
+                                      GTK_ACCESSIBLE_PROPERTY_LABEL, stripped_label,
+                                      -1);
+      g_free (stripped_label);
+    } else {
+      gtk_accessible_update_property (GTK_ACCESSIBLE (self),
+                                      GTK_ACCESSIBLE_PROPERTY_LABEL, self->title,
+                                      -1);
+    }
+  } else {
+    gtk_accessible_reset_property (GTK_ACCESSIBLE (self),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL);
+  }
 }
 
 /**
@@ -1730,12 +1776,12 @@ adw_view_stack_page_set_name (AdwViewStackPage *self,
       gtk_widget_get_parent (self->widget) &&
       ADW_IS_VIEW_STACK (gtk_widget_get_parent (self->widget)) &&
       name) {
-    GList *l;
+    guint i;
 
     stack = ADW_VIEW_STACK (gtk_widget_get_parent (self->widget));
 
-    for (l = stack->children; l; l = l->next) {
-      AdwViewStackPage *p = l->data;
+    for (i = 0; i < stack->children->len; i++) {
+      AdwViewStackPage *p = g_ptr_array_index (stack->children, i);
       if (self == p)
         continue;
 
@@ -1788,11 +1834,9 @@ adw_view_stack_page_set_title (AdwViewStackPage *self,
   if (!g_set_str (&self->title, title))
     return;
 
-  g_object_notify_by_pspec (G_OBJECT (self), page_props[PAGE_PROP_TITLE]);
+  update_page (self);
 
-  gtk_accessible_update_property (GTK_ACCESSIBLE (self),
-                                  GTK_ACCESSIBLE_PROPERTY_LABEL, self->title,
-                                  -1);
+  g_object_notify_by_pspec (G_OBJECT (self), page_props[PAGE_PROP_TITLE]);
 }
 
 /**
@@ -1826,6 +1870,8 @@ adw_view_stack_page_set_use_underline (AdwViewStackPage *self,
     return;
 
   self->use_underline = use_underline;
+
+  update_page (self);
 
   g_object_notify_by_pspec (G_OBJECT (self), page_props[PAGE_PROP_USE_UNDERLINE]);
 }
@@ -2215,15 +2261,14 @@ void
 adw_view_stack_remove (AdwViewStack  *self,
                        GtkWidget     *child)
 {
-  GList *l;
   guint position;
 
   g_return_if_fail (ADW_IS_VIEW_STACK (self));
   g_return_if_fail (GTK_IS_WIDGET (child));
   g_return_if_fail (gtk_widget_get_parent (child) == GTK_WIDGET (self));
 
-  for (l = self->children, position = 0; l; l = l->next, position++) {
-    AdwViewStackPage *page = l->data;
+  for (position = 0; position < self->children->len; position++) {
+    AdwViewStackPage *page = g_ptr_array_index (self->children, position);
 
     if (page->widget == child)
       break;
@@ -2231,8 +2276,10 @@ adw_view_stack_remove (AdwViewStack  *self,
 
   stack_remove (self, child, FALSE);
 
-  if (self->pages)
+  if (self->pages) {
     g_list_model_items_changed (G_LIST_MODEL (self->pages), position, 1, 0);
+    g_object_notify_by_pspec (G_OBJECT (self->pages), pages_props[PAGES_PROP_N_ITEMS]);
+  }
 }
 
 /**

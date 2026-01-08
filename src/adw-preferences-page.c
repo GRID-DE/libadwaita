@@ -30,7 +30,7 @@
  *
  * ## Accessibility
  *
- * `AdwPreferencesPage` uses the `GTK_ACCESSIBLE_ROLE_GROUP` role.
+ * `AdwPreferencesPage` uses the [enum@Gtk.AccessibleRole.group] role.
  */
 
 typedef struct
@@ -304,10 +304,15 @@ adw_preferences_page_buildable_add_child (GtkBuildable *buildable,
   AdwPreferencesPage *self = ADW_PREFERENCES_PAGE (buildable);
   AdwPreferencesPagePrivate *priv = adw_preferences_page_get_instance_private (self);
 
-  if (priv->box && ADW_IS_PREFERENCES_GROUP (child))
+  if (priv->box && ADW_IS_PREFERENCES_GROUP (child)) {
     adw_preferences_page_add (self, ADW_PREFERENCES_GROUP (child));
-  else
+  } else if (priv->scrolled_window && GTK_IS_WIDGET (child)) {
+    g_critical ("Trying to add %s as a child to an AdwPreferencePage, "
+                "but only AdwPreferencesGroup is allowed",
+                G_OBJECT_TYPE_NAME (child));
+  } else {
     parent_buildable_iface->add_child (buildable, builder, child, type);
+  }
 }
 
 static void
@@ -527,6 +532,7 @@ adw_preferences_page_set_title (AdwPreferencesPage *self,
   AdwPreferencesPagePrivate *priv;
 
   g_return_if_fail (ADW_IS_PREFERENCES_PAGE (self));
+  g_return_if_fail (title != NULL);
 
   priv = adw_preferences_page_get_instance_private (self);
 
@@ -555,7 +561,7 @@ adw_preferences_page_get_description (AdwPreferencesPage *self)
 
   priv = adw_preferences_page_get_instance_private (self);
 
-  return gtk_label_get_text (priv->description);
+  return gtk_label_get_label (priv->description);
 }
 
 /**
@@ -576,6 +582,7 @@ adw_preferences_page_set_description (AdwPreferencesPage *self,
   AdwPreferencesPagePrivate *priv;
 
   g_return_if_fail (ADW_IS_PREFERENCES_PAGE (self));
+  g_return_if_fail (description != NULL);
 
   priv = adw_preferences_page_get_instance_private (self);
 

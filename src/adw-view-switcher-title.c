@@ -31,7 +31,7 @@
  *
  * In order to center the title in narrow windows, the header bar should have
  * [property@HeaderBar:centering-policy] set to
- * `ADW_CENTERING_POLICY_STRICT`.
+ * [enum@Adw.CenteringPolicy.strict].
  *
  * `AdwViewSwitcherTitle` is intended to be used together with
  * [class@ViewSwitcherBar].
@@ -494,6 +494,7 @@ adw_view_switcher_title_set_title (AdwViewSwitcherTitle *self,
                                    const char           *title)
 {
   g_return_if_fail (ADW_IS_VIEW_SWITCHER_TITLE (self));
+  g_return_if_fail (title != NULL);
 
   if (g_strcmp0 (adw_window_title_get_title (self->title_widget), title) == 0)
     return;
@@ -537,6 +538,7 @@ adw_view_switcher_title_set_subtitle (AdwViewSwitcherTitle *self,
                                       const char           *subtitle)
 {
   g_return_if_fail (ADW_IS_VIEW_SWITCHER_TITLE (self));
+  g_return_if_fail (subtitle != NULL);
 
   if (g_strcmp0 (adw_window_title_get_subtitle (self->title_widget), subtitle) == 0)
     return;

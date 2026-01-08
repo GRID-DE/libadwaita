@@ -18,9 +18,13 @@
                 <property name="child">
                   <object class="GtkSearchEntry" id="search_entry">
                     <property name="placeholder-text" translatable="yes">Search shortcuts</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Search shortcuts</property>
+                    </accessibility>
                     <signal name="search-started" handler="search_started_cb" swapped="yes"/>
                     <signal name="search-changed" handler="search_changed_cb" swapped="yes"/>
                     <signal name="stop-search" handler="stop_search_cb" swapped="yes"/>
+                    <signal name="activate" handler="search_activated_cb" swapped="yes"/>
                   </object>
                 </property>
               </object>
@@ -59,6 +63,7 @@
                       <object class="GtkListBox" id="search_list">
                         <property name="selection-mode">none</property>
                         <signal name="row-activated" handler="search_row_activated_cb" swapped="yes"/>
+                        <signal name="keynav-failed" handler="adw_widget_on_vertical_keynav_failed" swapped="yes"/>
                         <style>
                           <class name="boxed-list"/>
                         </style>

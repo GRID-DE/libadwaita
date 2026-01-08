@@ -11,7 +11,7 @@
 
 #include "adw-tab-overview-private.h"
 
-#include "adw-animation-util.h"
+#include "adw-animation-util-private.h"
 #include "adw-bin.h"
 #include "adw-header-bar.h"
 #include "adw-marshalers.h"
@@ -78,6 +78,26 @@
  * If search and window buttons are disabled, and secondary menu is not set, the
  * header bar will be hidden.
  *
+ * ## Drag-and-Drop
+ *
+ * `AdwTabOverview` thumbnails can have an additional drop target for arbitrary
+ * content.
+ *
+ * Use [method@TabOverview.setup_extra_drop_target] to set it up, specifying the
+ * supported content types and drag actions, then connect to
+ * [signal@TabOverview::extra-drag-drop] to handle a drop.
+ *
+ * In some cases, it may be necessary to determine the used action based on the
+ * content. In that case, set [property@TabOverview:extra-drag-preload] to
+ * `TRUE` and connect to [signal@TabOverview::extra-drag-value] signal, then
+ * return the action from its handler. To access this action from the
+ * [signal@TabOverview::extra-drag-drop] handler, use the
+ * [property@TabOverview:extra-drag-preferred-action] property.
+ *
+ * [signal@TabOverview::extra-drag-value] is also always emitted when starting to
+ * hover an item, with a `NULL` value. This happens even when
+ * [property@TabOverview:extra-drag-preload] is `FALSE`.
+ *
  * ## Actions
  *
  * `AdwTabOverview` defines the `overview.open` and `overview.close` actions for
@@ -120,6 +140,7 @@ struct _AdwTabOverview
   AdwAnimation *open_animation;
   double progress;
   gboolean animating;
+  gboolean use_crossfade;
 
   AdwTabThumbnail *transition_thumbnail;
   GtkWidget *transition_picture;
@@ -858,6 +879,18 @@ stop_search_cb (AdwTabOverview *self)
   set_search_active (self, FALSE);
 }
 
+static void
+search_activated_cb (AdwTabOverview *self)
+{
+  if (!self->search_active)
+    return;
+
+  if (adw_tab_grid_focus_first_row (self->pinned_grid, 0))
+    return;
+
+  adw_tab_grid_focus_first_row (self->grid, 0);
+}
+
 static AdwTabPage *
 create_tab (AdwTabOverview *self)
 {
@@ -1177,15 +1210,6 @@ adw_tab_overview_snapshot (GtkWidget   *widget,
                            GtkSnapshot *snapshot)
 {
   AdwTabOverview *self = ADW_TAB_OVERVIEW (widget);
-  graphene_rect_t bounds, transition_bounds, clip_bounds;
-  graphene_size_t clip_scale, corner_size, window_corner_size;
-  GskRoundedRect transition_rect;
-  gboolean round_top_left, round_top_right;
-  gboolean round_bottom_left, round_bottom_right;
-  GdkRGBA rgba;
-  GdkDisplay *display;
-  AdwStyleManager *style_manager;
-  gboolean hc;
 
   if (!self->animating) {
     if (self->is_open) {
@@ -1207,91 +1231,111 @@ adw_tab_overview_snapshot (GtkWidget   *widget,
     return;
   }
 
-  calculate_bounds (self, &bounds, &transition_bounds, &clip_bounds, &clip_scale);
-  should_round_corners (self, &round_top_left, &round_top_right,
-                        &round_bottom_left, &round_bottom_right);
+  if (self->use_crossfade) {
+    gtk_snapshot_push_cross_fade (snapshot, self->progress);
 
-  graphene_size_init (&corner_size,
-                      adw_lerp (0, THUMBNAIL_BORDER_RADIUS, self->progress),
-                      adw_lerp (0, THUMBNAIL_BORDER_RADIUS, self->progress));
-
-  graphene_size_init (&window_corner_size,
-                      adw_lerp (WINDOW_BORDER_RADIUS,
-                                THUMBNAIL_BORDER_RADIUS, self->progress),
-                      adw_lerp (WINDOW_BORDER_RADIUS,
-                                THUMBNAIL_BORDER_RADIUS, self->progress));
-
-  gsk_rounded_rect_init (&transition_rect, &transition_bounds,
-                         round_top_left     ? &window_corner_size : &corner_size,
-                         round_top_right    ? &window_corner_size : &corner_size,
-                         round_bottom_right ? &window_corner_size : &corner_size,
-                         round_bottom_left  ? &window_corner_size : &corner_size);
-
-  display = gtk_widget_get_display (widget);
-  style_manager = adw_style_manager_get_for_display (display);
-  hc = adw_style_manager_get_high_contrast (style_manager);
-
-  /* Draw overview */
-  gtk_widget_snapshot_child (widget, self->overview, snapshot);
-
-  /* Draw dim layer */
-  if (!adw_widget_lookup_color (widget, "shade_color", &rgba))
-    rgba.alpha = 0;
-
-  rgba.alpha *= 1 - self->progress;
-
-  gtk_snapshot_append_color (snapshot, &rgba, &bounds);
-
-  /* Draw the transition thumbnail. Unfortunately, since GTK widgets have
-   * integer sizes, we can't use a real widget for this and have to custom
-   * draw it instead. We also want to interpolate border-radius. */
-  gtk_snapshot_push_rounded_clip (snapshot, &transition_rect);
-
-  if (self->transition_pinned)
-    gtk_snapshot_push_cross_fade (snapshot, adw_easing_ease (ADW_EASE_IN_EXPO, self->progress));
-
-  gtk_snapshot_translate (snapshot, &transition_bounds.origin);
-  gtk_snapshot_scale (snapshot, clip_scale.width, clip_scale.height);
-  gtk_snapshot_translate (snapshot, &GRAPHENE_POINT_INIT (-clip_bounds.origin.x,
-                                                          -clip_bounds.origin.y));
-  gtk_widget_snapshot_child (widget, self->child_bin, snapshot);
-
-  if (self->transition_pinned) {
-    if (!adw_widget_lookup_color (self->transition_picture,
-                                  "thumbnail_bg_color", &rgba))
-      rgba.red = rgba.green = rgba.blue = rgba.alpha = 1;
-
+    gtk_widget_snapshot_child (widget, self->child_bin, snapshot);
     gtk_snapshot_pop (snapshot);
-    gtk_snapshot_append_color (snapshot, &rgba, &bounds);
+
+    gtk_widget_snapshot_child (widget, self->overview, snapshot);
     gtk_snapshot_pop (snapshot);
-  }
-
-  gtk_snapshot_pop (snapshot);
-
-  /* Draw outer outline */
-  if (hc) {
-    rgba.red = rgba.green = rgba.blue = 0;
-    rgba.alpha = 0.5;
   } else {
+    graphene_rect_t bounds, transition_bounds, clip_bounds;
+    graphene_size_t clip_scale, corner_size, window_corner_size;
+    GskRoundedRect transition_rect;
+    gboolean round_top_left, round_top_right;
+    gboolean round_bottom_left, round_bottom_right;
+    GdkRGBA rgba;
+    GdkDisplay *display;
+    AdwStyleManager *style_manager;
+    gboolean hc;
+
+    calculate_bounds (self, &bounds, &transition_bounds, &clip_bounds, &clip_scale);
+    should_round_corners (self, &round_top_left, &round_top_right,
+                          &round_bottom_left, &round_bottom_right);
+
+    graphene_size_init (&corner_size,
+                        adw_lerp (0, THUMBNAIL_BORDER_RADIUS, self->progress),
+                        adw_lerp (0, THUMBNAIL_BORDER_RADIUS, self->progress));
+
+    graphene_size_init (&window_corner_size,
+                        adw_lerp (WINDOW_BORDER_RADIUS,
+                                  THUMBNAIL_BORDER_RADIUS, self->progress),
+                        adw_lerp (WINDOW_BORDER_RADIUS,
+                                  THUMBNAIL_BORDER_RADIUS, self->progress));
+
+    gsk_rounded_rect_init (&transition_rect, &transition_bounds,
+                           round_top_left     ? &window_corner_size : &corner_size,
+                           round_top_right    ? &window_corner_size : &corner_size,
+                           round_bottom_right ? &window_corner_size : &corner_size,
+                           round_bottom_left  ? &window_corner_size : &corner_size);
+
+    display = gtk_widget_get_display (widget);
+    style_manager = adw_style_manager_get_for_display (display);
+    hc = adw_style_manager_get_high_contrast (style_manager);
+
+    /* Draw overview */
+    gtk_widget_snapshot_child (widget, self->overview, snapshot);
+
+    /* Draw dim layer */
     if (!adw_widget_lookup_color (widget, "shade_color", &rgba))
       rgba.alpha = 0;
-  }
 
-  rgba.alpha *= adw_easing_ease (ADW_EASE_OUT_EXPO, self->progress);
+    rgba.alpha *= 1 - self->progress;
 
-  gtk_snapshot_append_outset_shadow (snapshot, &transition_rect,
-                                     &rgba, 0, 0, 1, 0);
+    gtk_snapshot_append_color (snapshot, &rgba, &bounds);
 
-  /* Draw inner outline */
-  if (!self->transition_pinned || hc) {
-    /* Keep in sync with $window_outline_color */
-    rgba.red = rgba.green = rgba.blue = 1;
-    rgba.alpha = hc ? 0.3 : 0.07;
+    /* Draw the transition thumbnail. Unfortunately, since GTK widgets have
+     * integer sizes, we can't use a real widget for this and have to custom
+     * draw it instead. We also want to interpolate border-radius. */
+    gtk_snapshot_push_rounded_clip (snapshot, &transition_rect);
+
+    if (self->transition_pinned)
+      gtk_snapshot_push_cross_fade (snapshot, adw_easing_ease (ADW_EASE_IN_EXPO, self->progress));
+
+    gtk_snapshot_translate (snapshot, &transition_bounds.origin);
+    gtk_snapshot_scale (snapshot, clip_scale.width, clip_scale.height);
+    gtk_snapshot_translate (snapshot, &GRAPHENE_POINT_INIT (-clip_bounds.origin.x,
+                                                            -clip_bounds.origin.y));
+    gtk_widget_snapshot_child (widget, self->child_bin, snapshot);
+
+    if (self->transition_pinned) {
+      if (!adw_widget_lookup_color (self->transition_picture,
+                                    "thumbnail_bg_color", &rgba))
+        rgba.red = rgba.green = rgba.blue = rgba.alpha = 1;
+
+      gtk_snapshot_pop (snapshot);
+      gtk_snapshot_append_color (snapshot, &rgba, &bounds);
+      gtk_snapshot_pop (snapshot);
+    }
+
+    gtk_snapshot_pop (snapshot);
+
+    /* Draw outer outline */
+    if (hc) {
+      rgba.red = rgba.green = rgba.blue = 0;
+      rgba.alpha = 0.5;
+    } else {
+      if (!adw_widget_lookup_color (widget, "shade_color", &rgba))
+        rgba.alpha = 0;
+    }
 
     rgba.alpha *= adw_easing_ease (ADW_EASE_OUT_EXPO, self->progress);
 
-    gtk_snapshot_append_inset_shadow (snapshot, &transition_rect,
-                                      &rgba, 0, 0, 1, 0);
+    gtk_snapshot_append_outset_shadow (snapshot, &transition_rect,
+                                       &rgba, 0, 0, 1, 0);
+
+    /* Draw inner outline */
+    if (!self->transition_pinned || hc) {
+      /* Keep in sync with $window_outline_color */
+      rgba.red = rgba.green = rgba.blue = 1;
+      rgba.alpha = hc ? 0.3 : 0.07;
+
+      rgba.alpha *= adw_easing_ease (ADW_EASE_OUT_EXPO, self->progress);
+
+      gtk_snapshot_append_inset_shadow (snapshot, &transition_rect,
+                                        &rgba, 0, 0, 1, 0);
+    }
   }
 }
 
@@ -1687,12 +1731,13 @@ adw_tab_overview_class_init (AdwTabOverviewClass *klass)
   /**
    * AdwTabOverview:extra-drag-preferred-action:
    *
-   * The unique action on the `current-drop` of the
-   * [signal@TabOverview::extra-drag-drop].
+   * The current drag action during a drop.
    *
-   * This property should only be used during a
-   * [signal@TabOverview::extra-drag-drop] and is always a subset of what was
-   * originally passed to [method@TabOverview.setup_extra_drop_target].
+   * This property should only be used from inside a
+   * [signal@TabOverview::extra-drag-drop] handler.
+   *
+   * The action will be a subset of what was originally passed to
+   * [method@TabOverview.setup_extra_drop_target].
    *
    * Since: 1.4
    */
@@ -1753,14 +1798,14 @@ adw_tab_overview_class_init (AdwTabOverviewClass *klass)
    * @page: the page matching the tab the content was dropped onto
    * @value: the `GValue` being dropped
    *
-   * This signal is emitted when content is dropped onto a tab.
+   * Emitted when content is dropped onto a tab.
    *
    * The content must be of one of the types set up via
    * [method@TabOverview.setup_extra_drop_target].
    *
    * See [signal@Gtk.DropTarget::drop].
    *
-   * Returns: whether the drop was accepted for @page
+   * Returns: whether the drop was accepted
    *
    * Since: 1.3
    */
@@ -1780,9 +1825,9 @@ adw_tab_overview_class_init (AdwTabOverviewClass *klass)
    * AdwTabOverview::extra-drag-value:
    * @self: a tab overview
    * @page: the page matching the tab the content was dropped onto
-   * @value: the `GValue` being dropped
+   * @value: (nullable): the `GValue` being dropped
    *
-   * This signal is emitted when the dropped content is preloaded.
+   * Emitted when the dropped content is preloaded.
    *
    * In order for data to be preloaded, [property@TabOverview:extra-drag-preload]
    * must be set to `TRUE`.
@@ -1792,7 +1837,7 @@ adw_tab_overview_class_init (AdwTabOverviewClass *klass)
    *
    * See [property@Gtk.DropTarget:value].
    *
-   * Returns: the preferred action for the drop on @page
+   * Returns: the preferred action for the drop
    *
    * Since: 1.3
    */
@@ -1844,6 +1889,7 @@ adw_tab_overview_class_init (AdwTabOverviewClass *klass)
   gtk_widget_class_bind_template_callback (widget_class, empty_changed_cb);
   gtk_widget_class_bind_template_callback (widget_class, search_changed_cb);
   gtk_widget_class_bind_template_callback (widget_class, stop_search_cb);
+  gtk_widget_class_bind_template_callback (widget_class, search_activated_cb);
   gtk_widget_class_bind_template_callback (widget_class, new_tab_clicked_cb);
 
   gtk_widget_class_set_layout_manager_type (widget_class, GTK_TYPE_BIN_LAYOUT);
@@ -2155,12 +2201,17 @@ adw_tab_overview_set_open (AdwTabOverview *self,
     set_overview_visible (self, self->is_open, ANIMATION_OUT);
   }
 
+  self->use_crossfade = adw_get_reduce_motion (GTK_WIDGET (self));
+
   if (self->transition_picture)
     adw_tab_thumbnail_fade_in (self->transition_thumbnail);
 
-  self->transition_thumbnail = adw_tab_grid_get_transition_thumbnail (grid);
-  self->transition_picture = g_object_ref (adw_tab_thumbnail_get_thumbnail (self->transition_thumbnail));
-  adw_tab_thumbnail_fade_out (self->transition_thumbnail);
+  if (!self->use_crossfade) {
+    self->transition_thumbnail = adw_tab_grid_get_transition_thumbnail (grid);
+    self->transition_picture = g_object_ref (adw_tab_thumbnail_get_thumbnail (self->transition_thumbnail));
+
+    adw_tab_thumbnail_fade_out (self->transition_thumbnail);
+  }
 
   adw_timed_animation_set_value_from (ADW_TIMED_ANIMATION (self->open_animation),
                                       self->progress);
@@ -2498,8 +2549,6 @@ adw_tab_overview_set_show_end_title_buttons (AdwTabOverview *self,
  *   all supported `GType`s that can be dropped
  * @n_types: number of @types
  *
- * Sets the supported types for this drop target.
- *
  * Sets up an extra drop target on tabs.
  *
  * This allows to drag arbitrary content onto tabs, for example URLs in a web
@@ -2564,9 +2613,15 @@ adw_tab_overview_get_extra_drag_preferred_action (AdwTabOverview *self)
  * adw_tab_overview_get_extra_drag_preload:
  * @self: a tab overview
  *
- * Gets whether drop data should be preloaded on hover.
+ * Gets the current drag action during a drop.
  *
- * Returns: whether drop data should be preloaded on hover
+ * This method should only be used from inside a
+ * [signal@TabOverview::extra-drag-drop] handler.
+ *
+ * The action will be a subset of what was originally passed to
+ * [method@TabOverview.setup_extra_drop_target].
+ *
+ * Returns: the drag action of the current drop
  *
  * Since: 1.3
  */

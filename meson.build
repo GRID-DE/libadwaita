@@ -1,5 +1,5 @@
 project('libadwaita', 'c',
-          version: '1.9.alpha',
+          version: '1.9.beta',
           license: 'LGPL-2.1-or-later',
     meson_version: '>= 0.63.0',
   default_options: [ 'warning_level=1', 'buildtype=debugoptimized', 'c_std=gnu11' ],
@@ -33,8 +33,8 @@ libversion = '0.9.0'
 # The so major version of the library
 soversion = 0
 
-glib_min_version = '>= 2.80.0'
-gtk_min_version = '>= 4.19.4'
+glib_min_version = '>= 2.84.0'
+gtk_min_version = '>= 4.21.1'
 
 glib_dep = dependency('glib-2.0', version: glib_min_version)
 gio_dep = dependency('gio-2.0', version: glib_min_version)

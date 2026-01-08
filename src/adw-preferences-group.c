@@ -49,7 +49,7 @@
  *
  * ## Accessibility
  *
- * `AdwPreferencesGroup` uses the `GTK_ACCESSIBLE_ROLE_GROUP` role.
+ * `AdwPreferencesGroup` uses the [enum@Gtk.AccessibleRole.group] role.
  */
 
 typedef struct
@@ -150,22 +150,6 @@ update_header_visibility (AdwPreferencesGroup *self)
     gtk_widget_add_css_class (GTK_WIDGET (priv->header_box), "single-line");
   else
     gtk_widget_remove_css_class (GTK_WIDGET (priv->header_box), "single-line");
-}
-
-static gboolean
-listbox_keynav_failed_cb (AdwPreferencesGroup *self,
-                          GtkDirectionType     direction)
-{
-  GtkWidget *toplevel = GTK_WIDGET (gtk_widget_get_root (GTK_WIDGET (self)));
-
-  if (!toplevel)
-    return FALSE;
-
-  if (direction != GTK_DIR_UP && direction != GTK_DIR_DOWN)
-    return FALSE;
-
-  return gtk_widget_child_focus (toplevel, direction == GTK_DIR_UP ?
-                                 GTK_DIR_TAB_BACKWARD : GTK_DIR_TAB_FORWARD);
 }
 
 static gboolean
@@ -326,7 +310,7 @@ adw_preferences_group_class_init (AdwPreferencesGroupClass *klass)
   gtk_widget_class_bind_template_child_private (widget_class, AdwPreferencesGroup, listbox_box);
   gtk_widget_class_bind_template_child_private (widget_class, AdwPreferencesGroup, title);
   gtk_widget_class_bind_template_child_private (widget_class, AdwPreferencesGroup, header_box);
-  gtk_widget_class_bind_template_callback (widget_class, listbox_keynav_failed_cb);
+  gtk_widget_class_bind_template_callback (widget_class, adw_widget_on_vertical_keynav_failed);
 
   gtk_widget_class_set_css_name (widget_class, "preferencesgroup");
   gtk_widget_class_set_accessible_role (widget_class, GTK_ACCESSIBLE_ROLE_GROUP);
@@ -486,7 +470,7 @@ adw_preferences_group_get_title (AdwPreferencesGroup *self)
 
   priv = adw_preferences_group_get_instance_private (self);
 
-  return gtk_label_get_text (priv->title);
+  return gtk_label_get_label (priv->title);
 }
 
 /**
@@ -503,6 +487,7 @@ adw_preferences_group_set_title (AdwPreferencesGroup *self,
   AdwPreferencesGroupPrivate *priv;
 
   g_return_if_fail (ADW_IS_PREFERENCES_GROUP (self));
+  g_return_if_fail (title != NULL);
 
   priv = adw_preferences_group_get_instance_private (self);
 
@@ -533,7 +518,7 @@ adw_preferences_group_get_description (AdwPreferencesGroup *self)
 
   priv = adw_preferences_group_get_instance_private (self);
 
-  return gtk_label_get_text (priv->description);
+  return gtk_label_get_label (priv->description);
 }
 
 /**
